@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# ESP-IDF build output
+build/
+managed_components/
+dependencies.lock
+sdkconfig.old
+
+# Python caches
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Editor temp files
+*.swp
+*.swo

@@ -1,0 +1,7 @@
+{
+    "idf.espIdfPath": "/Users/mac/esp/v5.4/esp-idf",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.currentSetup": "/Users/mac/esp/v5.4/esp-idf"
+}
