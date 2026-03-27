@@ -3,5 +3,7 @@
     "idf.openOcdConfigs": [
         "board/esp32s3-builtin.cfg"
     ],
-    "idf.currentSetup": "/Users/mac/esp/v5.4/esp-idf"
+    "idf.currentSetup": "/Users/mac/esp/v5.4/esp-idf",
+    "idf.port": "/dev/tty.usbmodem1401",
+    "idf.flashType": "UART"
 }
