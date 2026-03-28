@@ -15,6 +15,15 @@ static const char *TAG = "storage";
 static const char *CALIBRATION_PATH = "/spiffs/calibration.json";
 static const char *GAIT_PATH = "/spiffs/gait.json";
 
+static void log_json_blob(const char *label, const char *json_text)
+{
+    if (json_text == NULL) {
+        ESP_LOGW(TAG, "%s JSON is null", label);
+        return;
+    }
+    ESP_LOGI(TAG, "%s JSON:\n%s", label, json_text);
+}
+
 static char *read_text_file(const char *path)
 {
     FILE *file = fopen(path, "rb");
@@ -103,6 +112,11 @@ static bool save_json_file(const char *path, cJSON *root)
     bool ok = false;
     if (serialized != NULL) {
         ok = write_text_file(path, serialized);
+        if (ok) {
+            log_json_blob(path, serialized);
+        } else {
+            ESP_LOGW(TAG, "Failed to write JSON file: %s", path);
+        }
         cJSON_free(serialized);
     }
     cJSON_Delete(root);
@@ -218,6 +232,7 @@ bool storage_service_load_all(system_config_t *config)
     if (calibration_text == NULL) {
         ok &= storage_service_save_calibration(&config->calibration);
     } else {
+        log_json_blob("loaded calibration", calibration_text);
         cJSON *root = cJSON_Parse(calibration_text);
         if (root != NULL) {
             load_calibration_from_json(&config->calibration, root);
@@ -230,6 +245,7 @@ bool storage_service_load_all(system_config_t *config)
     if (gait_text == NULL) {
         ok &= storage_service_save_gait(&config->gait);
     } else {
+        log_json_blob("loaded gait", gait_text);
         cJSON *root = cJSON_Parse(gait_text);
         if (root != NULL) {
             load_gait_from_json(&config->gait, root);
@@ -249,4 +265,14 @@ bool storage_service_save_calibration(const calibration_config_t *config)
 bool storage_service_save_gait(const gait_config_t *config)
 {
     return save_json_file(GAIT_PATH, create_gait_json(config));
+}
+
+char *storage_service_read_calibration_json(void)
+{
+    return read_text_file(CALIBRATION_PATH);
+}
+
+char *storage_service_read_gait_json(void)
+{
+    return read_text_file(GAIT_PATH);
 }

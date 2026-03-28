@@ -69,6 +69,30 @@ static esp_err_t send_json(httpd_req_t *req, const char *json)
     return httpd_resp_sendstr(req, json);
 }
 
+static char *read_request_body(httpd_req_t *req)
+{
+    if (req->content_len <= 0) {
+        return NULL;
+    }
+
+    char *buffer = calloc(1, (size_t)req->content_len + 1U);
+    if (buffer == NULL) {
+        return NULL;
+    }
+
+    int total = 0;
+    while (total < req->content_len) {
+        int received = httpd_req_recv(req, buffer + total, (size_t)(req->content_len - total));
+        if (received <= 0) {
+            free(buffer);
+            return NULL;
+        }
+        total += received;
+    }
+
+    return buffer;
+}
+
 static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
@@ -125,13 +149,13 @@ static esp_err_t gait_get_handler(httpd_req_t *req)
 
 static esp_err_t calibration_post_handler(httpd_req_t *req)
 {
-    char content[512] = {0};
-    int received = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (received <= 0) {
+    char *content = read_request_body(req);
+    if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
     }
 
     cJSON *root = cJSON_Parse(content);
+    free(content);
     if (root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     }
@@ -162,20 +186,22 @@ static esp_err_t calibration_post_handler(httpd_req_t *req)
     config_store_validate(s_config);
     robot_control_update_calibration(&s_config->calibration);
     robot_control_apply_mid_pose();
-    storage_service_save_calibration(&s_config->calibration);
+    if (!storage_service_save_calibration(&s_config->calibration)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save calibration");
+    }
     return send_json(req, "{\"status\":\"saved\"}");
 }
 
 static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
 {
-    char content[512] = {0};
-    int received = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (received <= 0) {
+    char *content = read_request_body(req);
+    if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
     }
 
     calibration_config_t preview = s_config->calibration;
     cJSON *root = cJSON_Parse(content);
+    free(content);
     if (root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     }
@@ -210,13 +236,13 @@ static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
 
 static esp_err_t gait_post_handler(httpd_req_t *req)
 {
-    char content[512] = {0};
-    int received = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (received <= 0) {
+    char *content = read_request_body(req);
+    if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
     }
 
     cJSON *root = cJSON_Parse(content);
+    free(content);
     if (root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     }
@@ -249,7 +275,9 @@ static esp_err_t gait_post_handler(httpd_req_t *req)
     cJSON_Delete(root);
     config_store_validate(s_config);
     robot_control_update_gait(&s_config->gait);
-    storage_service_save_gait(&s_config->gait);
+    if (!storage_service_save_gait(&s_config->gait)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save gait");
+    }
     return send_json(req, "{\"status\":\"saved\"}");
 }
 
@@ -281,13 +309,13 @@ static robot_action_t action_from_name(const char *name)
 
 static esp_err_t action_post_handler(httpd_req_t *req)
 {
-    char content[128] = {0};
-    int received = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (received <= 0) {
+    char *content = read_request_body(req);
+    if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
     }
 
     cJSON *root = cJSON_Parse(content);
+    free(content);
     if (root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     }
@@ -320,6 +348,30 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     esp_err_t err = send_json(req, json);
     cJSON_free(json);
     cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t calibration_file_get_handler(httpd_req_t *req)
+{
+    char *json = storage_service_read_calibration_json();
+    if (json == NULL) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Calibration file not found");
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, json);
+    free(json);
+    return err;
+}
+
+static esp_err_t gait_file_get_handler(httpd_req_t *req)
+{
+    char *json = storage_service_read_gait_json();
+    if (json == NULL) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Gait file not found");
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, json);
+    free(json);
     return err;
 }
 
@@ -356,7 +408,7 @@ void web_ui_start(system_config_t *config)
     wifi_init_softap();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    server_config.max_uri_handlers = 8;
+    server_config.max_uri_handlers = 10;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
 
@@ -408,6 +460,18 @@ void web_ui_start(system_config_t *config)
         .handler = status_get_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t calibration_file_get = {
+        .uri = "/api/debug/calibration-file",
+        .method = HTTP_GET,
+        .handler = calibration_file_get_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t gait_file_get = {
+        .uri = "/api/debug/gait-file",
+        .method = HTTP_GET,
+        .handler = gait_file_get_handler,
+        .user_ctx = NULL,
+    };
 
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &root));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_get));
@@ -417,6 +481,8 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &action_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &status_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_file_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_file_get));
 
     ESP_LOGI(TAG, "Calibration/test web UI started");
 }

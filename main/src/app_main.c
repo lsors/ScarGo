@@ -12,6 +12,7 @@
 #include "storage_service.h"
 
 static const char *TAG = "scargo_app";
+static system_config_t s_config;
 
 static void configure_cpu_frequency(void)
 {
@@ -32,8 +33,6 @@ static void configure_cpu_frequency(void)
 
 void app_main(void)
 {
-    system_config_t config;
-
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     configure_cpu_frequency();
@@ -41,17 +40,17 @@ void app_main(void)
     buzzer_service_init();
     buzzer_service_boot_beep();
 
-    config_store_set_defaults(&config);
+    config_store_set_defaults(&s_config);
 
     if (!storage_service_init()) {
         ESP_LOGW(TAG, "Storage init failed, continuing with default config");
-    } else if (!storage_service_load_all(&config)) {
+    } else if (!storage_service_load_all(&s_config)) {
         ESP_LOGW(TAG, "Using default runtime config");
     }
 
-    if (!config_store_validate(&config)) {
+    if (!config_store_validate(&s_config)) {
         ESP_LOGW(TAG, "Loaded config was out of range, clamped to safe defaults");
     }
 
-    app_tasks_start(&config);
+    app_tasks_start(&s_config);
 }
