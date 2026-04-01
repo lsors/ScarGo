@@ -51,6 +51,11 @@
 #define SCARGO_SSD1306_ADDR 0x3C
 #define SCARGO_SSD1306_ADDR_ALT 0x3D
 
+#define SCARGO_ARM_CHANNEL_0 3
+#define SCARGO_ARM_CHANNEL_1 4
+#define SCARGO_ARM_CHANNEL_2 11
+#define SCARGO_ARM_CHANNEL_3 12
+
 #define SCARGO_RC_DEADZONE 0.04f
 #define SCARGO_BALANCE_KP_ROLL 0.12f
 #define SCARGO_BALANCE_KI_ROLL 0.00f
@@ -94,6 +99,11 @@ typedef struct {
     int buzzer;
 } scargo_gpio_map_t;
 
+typedef enum {
+    SCARGO_BUZZER_MODE_GPIO = 0,
+    SCARGO_BUZZER_MODE_PWM = 1,
+} scargo_buzzer_mode_t;
+
 typedef struct {
     float body_width_mm;
     float body_length_mm;
@@ -108,6 +118,7 @@ typedef struct {
 } scargo_servo_binding_t;
 
 typedef struct {
+    int8_t shoulder_sign;
     int8_t knee_coupling_sign;
     float knee_coupling_offset_deg;
 } scargo_leg_kinematics_binding_t;
@@ -116,3 +127,4 @@ const scargo_gpio_map_t *board_defaults_gpio_map(void);
 const scargo_mechanics_t *board_defaults_mechanics(void);
 const scargo_servo_binding_t (*board_defaults_servo_map(void))[SCARGO_JOINTS_PER_LEG];
 const scargo_leg_kinematics_binding_t *board_defaults_leg_kinematics(void);
+scargo_buzzer_mode_t board_defaults_buzzer_mode(void);

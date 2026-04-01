@@ -14,6 +14,7 @@
 #define PCA9685_MODE1_SLEEP 0x10
 #define PCA9685_MODE1_AI 0x20
 #define PCA9685_MODE1_RESTART 0x80
+#define PCA9685_CHANNEL_COUNT 16
 
 static const char *TAG = "pca9685";
 static i2c_master_dev_handle_t s_device_handle;
@@ -81,7 +82,7 @@ bool pca9685_driver_init(void)
 
 bool pca9685_driver_set_angle_deg(uint8_t channel, float angle_deg)
 {
-    if (!s_ready || channel >= SCARGO_SERVO_COUNT) {
+    if (!s_ready || channel >= PCA9685_CHANNEL_COUNT) {
         return false;
     }
 
@@ -104,7 +105,7 @@ bool pca9685_driver_set_all_off(void)
         return false;
     }
 
-    for (uint8_t channel = 0; channel < SCARGO_SERVO_COUNT; ++channel) {
+    for (uint8_t channel = 0; channel < PCA9685_CHANNEL_COUNT; ++channel) {
         if (!write_pwm(channel, 0, 0)) {
             return false;
         }

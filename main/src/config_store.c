@@ -49,6 +49,10 @@ void config_store_set_defaults(system_config_t *config)
     config->gait.stance_ratio_min = SCARGO_MIN_STANCE_RATIO;
     config->gait.stance_ratio_max = SCARGO_MAX_STANCE_RATIO;
     config->gait.diagonal_phase_offset = SCARGO_DEFAULT_PHASE_OFFSET;
+    config->oled.page = 6;
+    config->oled.leg = 0;
+    config->oled.leg_view = 5;
+    config->oled.robot_view = 5;
 }
 
 bool config_store_validate(system_config_t *config)
@@ -103,6 +107,11 @@ bool config_store_validate(system_config_t *config)
     config->gait.max_body_roll_deg = clampf(config->gait.max_body_roll_deg, 0.0f, SCARGO_MAX_BODY_ROLL_DEG);
     config->gait.max_body_pitch_deg = clampf(config->gait.max_body_pitch_deg, 0.0f, SCARGO_MAX_BODY_PITCH_DEG);
     config->gait.diagonal_phase_offset = clampf(config->gait.diagonal_phase_offset, 0.0f, 0.5f);
+
+    config->oled.page = clampi(config->oled.page, 0, 6);
+    config->oled.leg = clampi(config->oled.leg, 0, SCARGO_LEG_COUNT - 1);
+    config->oled.leg_view = clampi(config->oled.leg_view, 0, 5);
+    config->oled.robot_view = clampi(config->oled.robot_view, 0, 5);
 
     return true;
 }

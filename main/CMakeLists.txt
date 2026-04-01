@@ -4,6 +4,7 @@ set(SOURCES
     src/board_defaults.c
     src/buzzer_service.c
     src/config_store.c
+    src/cpu_usage_service.c
     src/display_service.c
     src/imu_service.c
     src/kinematics.c

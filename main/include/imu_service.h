@@ -15,3 +15,4 @@ typedef struct {
 void imu_service_init(void);
 void imu_service_tick(void);
 attitude_state_t imu_service_get_attitude(void);
+void imu_service_zero_yaw(void);

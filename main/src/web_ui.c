@@ -5,8 +5,10 @@
 #include <string.h>
 
 #include "cJSON.h"
-#include "config_store.h"
 #include "board_defaults.h"
+#include "buzzer_service.h"
+#include "config_store.h"
+#include "display_service.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
@@ -69,6 +71,61 @@ static esp_err_t send_json(httpd_req_t *req, const char *json)
     return httpd_resp_sendstr(req, json);
 }
 
+static const char *display_page_name(display_page_t page)
+{
+    switch (page) {
+    case DISPLAY_PAGE_STATUS:
+        return "imu";
+    case DISPLAY_PAGE_CALIBRATION:
+        return "calibration";
+    case DISPLAY_PAGE_TEST:
+        return "test";
+    case DISPLAY_PAGE_RC_TARGET:
+        return "rc";
+    case DISPLAY_PAGE_CPU:
+        return "cpu";
+    case DISPLAY_PAGE_LEG_PREVIEW:
+        return "leg";
+    case DISPLAY_PAGE_ROBOT_PREVIEW:
+        return "robot";
+    default:
+        return "rc";
+    }
+}
+
+static bool display_page_from_name(const char *name, display_page_t *out_page)
+{
+    if (strcmp(name, "imu") == 0) {
+        *out_page = DISPLAY_PAGE_STATUS;
+        return true;
+    }
+    if (strcmp(name, "calibration") == 0) {
+        *out_page = DISPLAY_PAGE_CALIBRATION;
+        return true;
+    }
+    if (strcmp(name, "test") == 0) {
+        *out_page = DISPLAY_PAGE_TEST;
+        return true;
+    }
+    if (strcmp(name, "rc") == 0) {
+        *out_page = DISPLAY_PAGE_RC_TARGET;
+        return true;
+    }
+    if (strcmp(name, "cpu") == 0) {
+        *out_page = DISPLAY_PAGE_CPU;
+        return true;
+    }
+    if (strcmp(name, "leg") == 0) {
+        *out_page = DISPLAY_PAGE_LEG_PREVIEW;
+        return true;
+    }
+    if (strcmp(name, "robot") == 0) {
+        *out_page = DISPLAY_PAGE_ROBOT_PREVIEW;
+        return true;
+    }
+    return false;
+}
+
 static char *read_request_body(httpd_req_t *req)
 {
     if (req->content_len <= 0) {
@@ -95,6 +152,7 @@ static char *read_request_body(httpd_req_t *req)
 
 static esp_err_t root_handler(httpd_req_t *req)
 {
+    buzzer_service_page_connect_beep();
     httpd_resp_set_type(req, "text/html");
     size_t html_size = 0;
     char *html = load_html_asset(&html_size);
@@ -189,6 +247,7 @@ static esp_err_t calibration_post_handler(httpd_req_t *req)
     if (!storage_service_save_calibration(&s_config->calibration)) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save calibration");
     }
+    buzzer_service_save_beep();
     return send_json(req, "{\"status\":\"saved\"}");
 }
 
@@ -232,6 +291,48 @@ static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
     robot_control_update_calibration(&preview);
     robot_control_apply_mid_pose();
     return send_json(req, "{\"status\":\"preview\"}");
+}
+
+static esp_err_t calibration_start_post_handler(httpd_req_t *req)
+{
+    char *content = read_request_body(req);
+    if (content == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
+    }
+
+    calibration_config_t preview = s_config->calibration;
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    }
+
+    cJSON *legs = cJSON_GetObjectItem(root, "legs");
+    if (cJSON_IsArray(legs)) {
+        cJSON *leg_item = NULL;
+        cJSON_ArrayForEach(leg_item, legs) {
+            cJSON *leg_index = cJSON_GetObjectItem(leg_item, "leg");
+            cJSON *offsets = cJSON_GetObjectItem(leg_item, "offsets_deg");
+            if (!cJSON_IsNumber(leg_index) || !cJSON_IsArray(offsets)) {
+                continue;
+            }
+            int leg = leg_index->valueint;
+            if (leg < 0 || leg >= SCARGO_LEG_COUNT) {
+                continue;
+            }
+            for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
+                cJSON *value = cJSON_GetArrayItem(offsets, joint);
+                if (cJSON_IsNumber(value)) {
+                    preview.servo_offsets_deg[leg][joint] = (int16_t)value->valuedouble;
+                }
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+    robot_control_update_calibration(&preview);
+    robot_control_apply_mid_pose();
+    return send_json(req, "{\"status\":\"calibration_started\"}");
 }
 
 static esp_err_t gait_post_handler(httpd_req_t *req)
@@ -278,6 +379,7 @@ static esp_err_t gait_post_handler(httpd_req_t *req)
     if (!storage_service_save_gait(&s_config->gait)) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save gait");
     }
+    buzzer_service_save_beep();
     return send_json(req, "{\"status\":\"saved\"}");
 }
 
@@ -339,16 +441,79 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "mode", robot_control_get_mode() == ROBOT_MODE_WALK ? "walk" : "stand");
     cJSON_AddBoolToObject(root, "rc_link", command.link_up);
+    cJSON_AddBoolToObject(root, "imu_ready", attitude.ready);
     cJSON_AddNumberToObject(root, "roll_deg", attitude.roll_deg);
     cJSON_AddNumberToObject(root, "pitch_deg", attitude.pitch_deg);
     cJSON_AddNumberToObject(root, "yaw_deg", attitude.yaw_deg);
+    cJSON_AddNumberToObject(root, "roll_rate_dps", attitude.roll_rate_dps);
+    cJSON_AddNumberToObject(root, "pitch_rate_dps", attitude.pitch_rate_dps);
     cJSON_AddNumberToObject(root, "throttle", command.throttle);
+    robot_target_pose_t target = robot_control_get_target_pose(&command);
+    cJSON_AddNumberToObject(root, "target_roll_deg", target.roll_deg);
+    cJSON_AddNumberToObject(root, "target_pitch_deg", target.pitch_deg);
+    cJSON_AddNumberToObject(root, "target_yaw_deg", target.yaw_deg);
+    cJSON_AddNumberToObject(root, "target_height_mm", target.height_mm);
+    cJSON_AddStringToObject(root, "oled_page", display_page_name(display_service_get_page()));
+    cJSON_AddNumberToObject(root, "oled_leg", display_service_get_leg_preview_selection());
 
     char *json = cJSON_PrintUnformatted(root);
     esp_err_t err = send_json(req, json);
     cJSON_free(json);
     cJSON_Delete(root);
     return err;
+}
+
+static esp_err_t oled_page_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "page", display_page_name(display_service_get_page()));
+    cJSON_AddNumberToObject(root, "leg", display_service_get_leg_preview_selection());
+    char *json = cJSON_PrintUnformatted(root);
+    esp_err_t err = send_json(req, json);
+    cJSON_free(json);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t oled_page_post_handler(httpd_req_t *req)
+{
+    char *content = read_request_body(req);
+    if (content == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
+    }
+
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    }
+
+    cJSON *page_item = cJSON_GetObjectItem(root, "page");
+    if (!cJSON_IsString(page_item)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing page");
+    }
+
+    display_page_t page;
+    if (!display_page_from_name(page_item->valuestring, &page)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid page");
+    }
+
+    display_service_set_page(page);
+    cJSON *leg_item = cJSON_GetObjectItem(root, "leg");
+    if (cJSON_IsNumber(leg_item)) {
+        display_service_set_leg_preview_selection(leg_item->valueint);
+    }
+    cJSON_Delete(root);
+    return send_json(req, "{\"status\":\"oled_page_set\"}");
+}
+
+static esp_err_t imu_yaw_zero_post_handler(httpd_req_t *req)
+{
+    (void)req;
+    imu_service_zero_yaw();
+    return send_json(req, "{\"status\":\"imu_yaw_zeroed\"}");
 }
 
 static esp_err_t calibration_file_get_handler(httpd_req_t *req)
@@ -408,7 +573,7 @@ void web_ui_start(system_config_t *config)
     wifi_init_softap();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    server_config.max_uri_handlers = 10;
+    server_config.max_uri_handlers = 16;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
 
@@ -436,6 +601,12 @@ void web_ui_start(system_config_t *config)
         .handler = calibration_preview_post_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t calibration_start_post = {
+        .uri = "/api/calibration/start",
+        .method = HTTP_POST,
+        .handler = calibration_start_post_handler,
+        .user_ctx = NULL,
+    };
     httpd_uri_t gait_get = {
         .uri = "/api/gait",
         .method = HTTP_GET,
@@ -460,6 +631,24 @@ void web_ui_start(system_config_t *config)
         .handler = status_get_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t oled_page_get = {
+        .uri = "/api/oled/page",
+        .method = HTTP_GET,
+        .handler = oled_page_get_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t oled_page_post = {
+        .uri = "/api/oled/page",
+        .method = HTTP_POST,
+        .handler = oled_page_post_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t imu_yaw_zero_post = {
+        .uri = "/api/imu/yaw-zero",
+        .method = HTTP_POST,
+        .handler = imu_yaw_zero_post_handler,
+        .user_ctx = NULL,
+    };
     httpd_uri_t calibration_file_get = {
         .uri = "/api/debug/calibration-file",
         .method = HTTP_GET,
@@ -477,10 +666,14 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_preview_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_start_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &action_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &status_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &oled_page_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &oled_page_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_yaw_zero_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_file_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_file_get));
 

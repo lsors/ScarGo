@@ -1,5 +1,7 @@
 #include "app_tasks.h"
 
+#include "buzzer_service.h"
+#include "cpu_usage_service.h"
 #include "display_service.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -52,19 +54,31 @@ static void ui_task(void *arg)
     const TickType_t delay_ticks = pdMS_TO_TICKS(50);
 
     while (true) {
+        cpu_usage_service_tick();
         display_service_tick();
         vTaskDelay(delay_ticks);
+    }
+}
+
+static void buzzer_task(void *arg)
+{
+    (void)arg;
+    const TickType_t delay_ticks = pdMS_TO_TICKS(2000);
+
+    while (true) {
+        vTaskDelay(delay_ticks);
+        buzzer_service_test_beep();
     }
 }
 
 void app_tasks_start(const system_config_t *config)
 {
     robot_control_init(config);
+    cpu_usage_service_init();
     imu_service_init();
     rc_input_init();
     display_service_init();
     web_ui_start((system_config_t *)config);
-    robot_control_apply_mid_pose();
 
     ESP_LOGI(TAG, "Creating FreeRTOS tasks");
 
@@ -72,4 +86,7 @@ void app_tasks_start(const system_config_t *config)
     xTaskCreatePinnedToCore(imu_task, "imu_task", 4096, NULL, 9, NULL, 1);
     xTaskCreatePinnedToCore(rc_task, "rc_task", 4096, NULL, 7, NULL, 0);
     xTaskCreatePinnedToCore(ui_task, "ui_task", 4096, NULL, 3, NULL, 0);
+    // Keep the test beep task implementation for future hardware revisions,
+    // but leave it disabled on the current board.
+    // xTaskCreatePinnedToCore(buzzer_task, "buzzer_task", 2048, NULL, 2, NULL, 0);
 }

@@ -28,18 +28,20 @@ static const scargo_mechanics_t MECHANICS = {
 };
 
 static const scargo_servo_binding_t SERVO_MAP[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG] = {
-    {{0, -1}, {1, -1}, {2, 1}},
-    {{3, 1}, {4, 1}, {5, 1}},
-    {{6, 1}, {7, 1}, {8, -1}},
-    {{9, -1}, {10, -1}, {11, -1}},
+    {{2, -1}, {1, -1}, {0, 1}},
+    {{13, 1}, {14, 1}, {15, 1}},
+    {{5, 1}, {6, 1}, {7, -1}},
+    {{10, -1}, {9, -1}, {8, -1}},
 };
 
 static const scargo_leg_kinematics_binding_t LEG_KINEMATICS[SCARGO_LEG_COUNT] = {
-    [SCARGO_LEG_FRONT_RIGHT] = {.knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
-    [SCARGO_LEG_FRONT_LEFT] = {.knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
-    [SCARGO_LEG_REAR_RIGHT] = {.knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
-    [SCARGO_LEG_REAR_LEFT] = {.knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
+    [SCARGO_LEG_FRONT_RIGHT] = {.shoulder_sign = -1, .knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
+    [SCARGO_LEG_FRONT_LEFT] = {.shoulder_sign = 1, .knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
+    [SCARGO_LEG_REAR_RIGHT] = {.shoulder_sign = -1, .knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
+    [SCARGO_LEG_REAR_LEFT] = {.shoulder_sign = 1, .knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
 };
+
+static const scargo_buzzer_mode_t BUZZER_MODE = SCARGO_BUZZER_MODE_GPIO;
 
 const scargo_gpio_map_t *board_defaults_gpio_map(void)
 {
@@ -59,4 +61,9 @@ const scargo_servo_binding_t (*board_defaults_servo_map(void))[SCARGO_JOINTS_PER
 const scargo_leg_kinematics_binding_t *board_defaults_leg_kinematics(void)
 {
     return LEG_KINEMATICS;
+}
+
+scargo_buzzer_mode_t board_defaults_buzzer_mode(void)
+{
+    return BUZZER_MODE;
 }

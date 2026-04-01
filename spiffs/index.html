@@ -22,63 +22,129 @@
       color: var(--ink);
     }
     header {
-      padding: 24px 18px 20px;
+      padding: 10px 10px 8px;
       background: linear-gradient(135deg, #183a37, #d67d3e);
       color: #fff;
     }
-    header h1 {
-      margin: 0 0 6px;
-      font-size: 28px;
-      line-height: 1.1;
-    }
-    header p {
-      margin: 0;
-      opacity: 0.92;
-    }
     .header-top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px 10px;
+      align-items: start;
+    }
+    .header-copy h1 {
+      margin: 0 0 2px;
+      font-size: clamp(16px, 5vw, 22px);
+      line-height: 1.1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .header-copy p {
+      margin: 0;
+      font-size: clamp(10px, 3.2vw, 12px);
+      line-height: 1.25;
+      opacity: 0.88;
+    }
+    .header-tools {
+      display: grid;
+      justify-items: end;
+      align-content: start;
+      gap: 5px;
+      align-self: start;
     }
     .lang-switch {
       display: inline-flex;
       gap: 6px;
-      padding: 4px;
+      padding: 3px;
       border-radius: 999px;
       background: rgba(255,255,255,0.14);
       backdrop-filter: blur(8px);
     }
+    .ui-version {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.16);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .page-nav {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+      width: 100%;
+    }
+    .page-nav button {
+      min-height: 44px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.18);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      font-size: 14px;
+      font-weight: 800;
+      transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .page-nav button.active {
+      background: rgba(255,255,255,0.92);
+      color: var(--brand-strong);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+      transform: translateY(-1px);
+    }
     .lang-switch button {
-      min-height: 34px;
-      padding: 8px 12px;
+      min-height: 30px;
+      padding: 6px 10px;
       border-radius: 999px;
       background: transparent;
       color: #fff;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
     }
     .lang-switch button.active {
       background: rgba(255,255,255,0.18);
     }
     main {
-      padding: 16px;
+      padding: 12px;
       display: grid;
-      gap: 16px;
-      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 12px;
+      grid-template-columns: 1fr;
     }
     .card {
       background: var(--panel);
-      border-radius: 18px;
-      padding: 16px;
+      border-radius: 16px;
+      padding: 12px;
       box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+    }
+    button.running {
+      background: #c85b4b;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .page {
+      display: none;
+    }
+    .page.active {
+      display: grid;
+      gap: 12px;
     }
     .section-head {
       display: grid;
-      gap: 6px;
+      gap: 4px;
     }
     .section-head h2 {
       margin: 0;
+    }
+    .button-row button.active,
+    .button-row button.selected {
+      background: var(--brand);
+      color: #fff;
+      border-color: var(--brand);
+      box-shadow: 0 6px 18px rgba(31, 122, 140, 0.22);
     }
     .servo-grid {
       display: grid;
@@ -87,89 +153,48 @@
     }
     .calib-layout {
       display: grid;
-      grid-template-columns: 220px minmax(0, 1fr);
-      gap: 12px;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 10px;
       align-items: start;
     }
     .leg-map {
-      background: linear-gradient(180deg, #f7f1e7, #f0f5f7);
+      background: linear-gradient(180deg, #f6f2ea, #eef4f6);
       border: 1px solid rgba(24, 58, 55, 0.08);
-      border-radius: 16px;
-      padding: 12px;
+      border-radius: 14px;
+      padding: 8px;
     }
     .leg-map-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      grid-template-rows: repeat(3, auto);
-      gap: 10px;
-      align-items: center;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
     }
     .leg-map-card {
-      border-radius: 12px;
+      border-radius: 10px;
       border: 1px solid rgba(24, 58, 55, 0.08);
       background: rgba(255,255,255,0.8);
-      padding: 10px;
+      padding: 8px 7px;
       cursor: pointer;
       transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
     }
-    .leg-map-card.pos-1 {
-      grid-column: 1;
-      grid-row: 1;
-    }
-    .leg-map-card.pos-0 {
-      grid-column: 3;
-      grid-row: 1;
-    }
-    .leg-map-card.pos-3 {
-      grid-column: 1;
-      grid-row: 3;
-    }
-    .leg-map-card.pos-2 {
-      grid-column: 3;
-      grid-row: 3;
-    }
     .leg-map-card.active {
       border-color: var(--brand);
-      box-shadow: 0 8px 24px rgba(31, 122, 140, 0.16);
+      box-shadow: 0 6px 18px rgba(31, 122, 140, 0.16);
       transform: translateY(-1px);
     }
-    .body-map {
-      grid-column: 2;
-      grid-row: 2;
-      height: 108px;
-      border-radius: 18px;
-      background: linear-gradient(180deg, #20373a, #36595c);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      text-align: center;
-      padding: 8px;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
-    }
-    .body-map .top {
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      opacity: 0.85;
-    }
-    .body-map .name {
-      font-size: 15px;
-      font-weight: 700;
-      line-height: 1.2;
-    }
     .leg-map-id {
-      font-size: 12px;
+      font-size: 11px;
       color: #66757f;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
     .leg-map-name {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 700;
-      margin-bottom: 8px;
+      margin-bottom: 5px;
     }
     .leg-mini {
       position: relative;
       width: 100%;
-      height: 64px;
+      height: 36px;
     }
     .leg-mini.right {
       transform: scaleX(-1);
@@ -183,19 +208,19 @@
       background: var(--brand-strong);
     }
     .leg-mini .body-dot {
-      left: 18px;
-      top: 10px;
-      width: 10px;
-      height: 10px;
+      left: 10px;
+      top: 8px;
+      width: 8px;
+      height: 8px;
       background: var(--accent);
     }
     .leg-mini .joint-dot.j1 {
-      left: 48px;
-      top: 28px;
+      left: 28px;
+      top: 16px;
     }
     .leg-mini .joint-dot.j2 {
-      left: 68px;
-      top: 48px;
+      left: 40px;
+      top: 26px;
     }
     .leg-mini .link {
       position: absolute;
@@ -205,15 +230,15 @@
       transform-origin: left center;
     }
     .leg-mini .l1 {
-      left: 24px;
-      top: 15px;
-      width: 36px;
+      left: 15px;
+      top: 12px;
+      width: 22px;
       transform: rotate(36deg);
     }
     .leg-mini .l2 {
-      left: 52px;
-      top: 32px;
-      width: 28px;
+      left: 31px;
+      top: 19px;
+      width: 18px;
       transform: rotate(42deg);
     }
     .leg-panels {
@@ -224,11 +249,11 @@
     .servo {
       background: var(--panel-soft);
       border-radius: 14px;
-      padding: 12px;
+      padding: 10px;
     }
     .leg-card {
       display: grid;
-      gap: 12px;
+      gap: 10px;
       border: 1px solid rgba(24, 58, 55, 0.08);
     }
     .leg-title {
@@ -244,7 +269,7 @@
       font-weight: 600;
     }
     .servo-label {
-      font-size: 13px;
+      font-size: 12px;
       color: #53636c;
       min-width: 108px;
     }
@@ -264,12 +289,12 @@
     button {
       border: 0;
       border-radius: 12px;
-      min-height: 46px;
-      padding: 12px 16px;
+      min-height: 42px;
+      padding: 10px 14px;
       background: var(--brand);
       color: #fff;
       cursor: pointer;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
     }
     button.alt {
@@ -301,7 +326,7 @@
     .slider-card {
       display: grid;
       gap: 8px;
-      padding: 10px 12px;
+      padding: 9px 11px;
       border-radius: 14px;
       background: var(--panel-soft);
       border: 1px solid rgba(24, 58, 55, 0.08);
@@ -323,6 +348,29 @@
       justify-content: space-between;
       color: #66757f;
       font-size: 12px;
+    }
+    .param-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #61707a;
+    }
+    .param-state::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #a0adb7;
+      flex: 0 0 auto;
+    }
+    .param-state.live::before {
+      background: #1f7a8c;
+    }
+    .param-state.range::before {
+      background: #d67d3e;
     }
     input[type="range"] {
       -webkit-appearance: none;
@@ -373,17 +421,110 @@
       font-size: 14px;
     }
     .tab {
-      display: grid;
       gap: 14px;
     }
     .status-panel {
       background: #eef6f8;
       border-radius: 14px;
-      padding: 12px;
+      padding: 10px;
       font-family: Menlo, monospace;
       font-size: 13px;
       line-height: 1.6;
       white-space: pre-wrap;
+    }
+    .imu-card {
+      display: grid;
+      gap: 10px;
+    }
+    .imu-layout {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+    .imu-canvas-wrap {
+      display: grid;
+      place-items: center;
+      min-height: 220px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #f3f7fa, #edf2f4);
+      border: 1px solid rgba(24, 58, 55, 0.08);
+    }
+    .throttle-card {
+      display: grid;
+      justify-items: center;
+      gap: 6px;
+      padding: 10px 6px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #f7f8fb, #eef4f6);
+      border: 1px solid rgba(24, 58, 55, 0.08);
+    }
+    .throttle-label {
+      font-size: 11px;
+      font-weight: 800;
+      color: #53636c;
+      letter-spacing: 0.05em;
+    }
+    .throttle-value {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--brand-strong);
+      line-height: 1;
+    }
+    .throttle-unit {
+      font-size: 11px;
+      color: #66757f;
+      margin-top: -4px;
+    }
+    .throttle-bar {
+      position: relative;
+      width: 18px;
+      height: 190px;
+      border-radius: 999px;
+      background: rgba(21, 33, 38, 0.08);
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(24, 58, 55, 0.08);
+    }
+    .throttle-fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 0%;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #d67d3e, #1f7a8c);
+      transition: height 0.12s ease;
+    }
+    #imu_canvas {
+      width: min(100%, 320px);
+      height: auto;
+      aspect-ratio: 1 / 1;
+    }
+    .imu-readout {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .imu-readout.hidden,
+    .status-panel.hidden {
+      display: none;
+    }
+    .imu-pill {
+      border-radius: 12px;
+      background: var(--panel-soft);
+      padding: 10px;
+      border: 1px solid rgba(24, 58, 55, 0.08);
+    }
+    .imu-pill .label {
+      display: block;
+      font-size: 12px;
+      color: #66757f;
+      margin-bottom: 4px;
+    }
+    .imu-pill .num {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--brand-strong);
     }
     .hint {
       color: #66757f;
@@ -391,27 +532,17 @@
       margin-top: -6px;
     }
     .toolbar {
-      position: sticky;
-      bottom: 0;
-      z-index: 5;
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      padding-top: 4px;
-      background: linear-gradient(to top, rgba(243, 237, 226, 0.98), rgba(243, 237, 226, 0));
+      gap: 8px;
+      padding-top: 2px;
     }
     @media (max-width: 900px) {
-      main {
-        grid-template-columns: 1fr;
-      }
       .calib-layout {
-        grid-template-columns: 1fr;
-      }
-      header h1 {
-        font-size: 24px;
+        grid-template-columns: 120px minmax(0, 1fr);
       }
       .card {
-        padding: 14px;
+        padding: 12px;
       }
       .servo-grid {
         grid-template-columns: 1fr;
@@ -433,17 +564,35 @@
     }
     @media (max-width: 520px) {
       main {
-        padding: 12px;
+        padding: 10px;
       }
       header {
-        padding: 18px 14px 16px;
+        padding: 10px 8px 8px;
       }
       .header-top {
-        flex-direction: column;
-        align-items: stretch;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 6px 8px;
       }
-      .lang-switch {
-        align-self: flex-start;
+      .header-tools {
+        justify-items: end;
+      }
+      .header-copy h1 {
+        font-size: clamp(15px, 5.2vw, 19px);
+      }
+      .header-copy p {
+        font-size: clamp(10px, 3vw, 11px);
+      }
+      .page-nav button {
+        min-height: 46px;
+      }
+      .imu-layout {
+        grid-template-columns: 58px minmax(0, 1fr);
+      }
+      .throttle-bar {
+        height: 162px;
+      }
+      .calib-layout {
+        grid-template-columns: 1fr;
       }
       .toolbar button,
       .actions button {
@@ -455,18 +604,26 @@
 <body>
   <header>
     <div class="header-top">
-      <div>
+      <div class="header-copy">
         <h1 data-i18n="title">ScarGo Control Surface</h1>
         <p data-i18n="subtitle">Calibration, gait tuning, and test actions</p>
       </div>
-      <div class="lang-switch">
-        <button id="lang-en" class="active" onclick="setLanguage('en')">EN</button>
-        <button id="lang-zh" onclick="setLanguage('zh')">中文</button>
+      <div class="header-tools">
+        <div class="ui-version">UI v2026.03.30.3-45</div>
+        <div class="lang-switch">
+          <button id="lang-en" class="active" onclick="setLanguage('en')">EN</button>
+          <button id="lang-zh" onclick="setLanguage('zh')">中文</button>
+        </div>
       </div>
     </div>
+      <div class="page-nav" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
+        <button id="page-tab-calibration" class="active" onclick="showPage('calibration')" data-i18n="pageCalibration">Calibration</button>
+        <button id="page-tab-gait" onclick="showPage('gait')" data-i18n="pageGait">Gait Test</button>
+        <button id="page-tab-oled" onclick="showPage('oled')" data-i18n="pageOled">OLED</button>
+      </div>
   </header>
   <main>
-    <section class="card tab">
+    <section id="page-calibration" class="card tab page active">
       <div class="section-head">
         <h2 data-i18n="calibTitle">Calibration</h2>
         <p class="muted" data-i18n="calibDesc">Adjust offsets in 1 degree steps. Preview updates the servo immediately. Save writes the values to flash.</p>
@@ -479,14 +636,16 @@
         <div id="calibration" class="leg-panels"></div>
       </div>
       <div class="toolbar">
-        <button class="ghost" onclick="previewZero()" data-i18n="previewZero">Preview All Zero</button>
-        <button class="danger" onclick="resetZeroAndSave()" data-i18n="resetZero">Reset All To Zero</button>
-        <button onclick="saveCalibration()" data-i18n="saveCalibration">Save Calibration</button>
+        <button id="btn-start-calibration" class="alt" onclick="startCalibration()" data-i18n="startCalibration">Start Calibration</button>
+        <button id="btn-preview-zero" class="ghost" onclick="previewZero()" data-i18n="previewZero">Preview All Zero</button>
+        <button id="btn-reset-zero" class="danger" onclick="resetZeroAndSave()" data-i18n="resetZero">Reset All To Zero</button>
+        <button id="btn-save-calibration" onclick="saveCalibration()" data-i18n="saveCalibration">Save Calibration</button>
         <button class="ghost" onclick="loadAll()" data-i18n="reload">Reload</button>
       </div>
+      <pre id="status"></pre>
     </section>
 
-    <section class="card tab">
+    <section id="page-gait" class="card tab page">
       <div class="section-head">
         <h2 data-i18n="gaitTitle">Gait Test</h2>
         <p class="muted" data-i18n="gaitDesc">Tune runtime gait parameters and trigger test actions.</p>
@@ -498,6 +657,7 @@
           <label for="step_height" data-i18n="stepHeight">Step Height (mm)</label>
           <span class="slider-value" id="step_height_value">40 mm</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="step_height" type="range">
         <div class="slider-range"><span>20</span><span>80</span></div>
       </div>
@@ -506,6 +666,7 @@
           <label for="step_cycle" data-i18n="cycleTime">Cycle Time (ms)</label>
           <span class="slider-value" id="step_cycle_value">350 ms</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="step_cycle" type="range">
         <div class="slider-range"><span>150</span><span>3000</span></div>
       </div>
@@ -514,6 +675,7 @@
           <label for="step_scale" data-i18n="stepScale">Step Scale</label>
           <span class="slider-value" id="step_scale_value">1.00</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="step_scale" type="range">
         <div class="slider-range"><span>0.50</span><span>1.00</span></div>
       </div>
@@ -522,6 +684,7 @@
           <label for="stance_ratio" data-i18n="stanceRatio">Stance Ratio</label>
           <span class="slider-value" id="stance_ratio_value">0.50</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="stance_ratio" type="range">
         <div class="slider-range"><span>0.50</span><span>0.80</span></div>
       </div>
@@ -530,6 +693,7 @@
           <label for="phase_offset" data-i18n="diagOffset">Diagonal Offset</label>
           <span class="slider-value" id="phase_offset_value">0.00</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="phase_offset" type="range">
         <div class="slider-range"><span>0.00</span><span>0.50</span></div>
       </div>
@@ -538,8 +702,16 @@
           <label for="stand_height" data-i18n="standHeight">Stand Height (mm)</label>
           <span class="slider-value" id="stand_height_value">140 mm</span>
         </div>
+        <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="stand_height" type="range">
         <div class="slider-range"><span>80</span><span>170</span></div>
+      </div>
+      <div class="slider-card">
+        <div class="slider-head">
+          <span data-i18n="paramRangesTitle">Stored range limits</span>
+        </div>
+        <div class="param-state range" data-i18n="paramRangeOnly">Range constraint only</div>
+        <div class="hint" data-i18n="paramRangesHint">Min/max fields are already saved in config and used to clamp values, but they are not exposed as direct runtime controls on this page.</div>
       </div>
       <div class="actions">
         <button class="ghost" onclick="applyGaitDefaults()" data-i18n="resetGait">Reset Gait Defaults</button>
@@ -550,7 +722,36 @@
         <button class="alt" onclick="sendAction('turn_left')" data-i18n="turnLeft">Turn Left</button>
         <button class="alt" onclick="sendAction('turn_right')" data-i18n="turnRight">Turn Right</button>
       </div>
-      <pre id="status"></pre>
+    </section>
+
+    <section id="page-oled" class="card tab page">
+      <div class="section-head">
+        <h2 data-i18n="oledControl">OLED Display</h2>
+        <p data-i18n="oledHint">Choose which page the OLED shows on boot or during runtime before hardware buttons are ready.</p>
+      </div>
+      <div class="status-panel" id="oled_status">Loading OLED page...</div>
+      <div class="button-row">
+        <button id="oled-page-rc" class="ghost" onclick="setOledPage('rc')" data-i18n="oledPageRc">RC Page</button>
+        <button id="oled-page-imu" class="ghost" onclick="setOledPage('imu')" data-i18n="oledPageImu">IMU Page</button>
+        <button id="oled-page-cpu" class="ghost" onclick="setOledPage('cpu')" data-i18n="oledPageCpu">CPU Page</button>
+        <button id="oled-page-leg" class="ghost" onclick="setOledPage('leg')" data-i18n="oledPageLeg">Live Leg Page</button>
+        <button id="oled-page-robot" class="ghost" onclick="setOledPage('robot')" data-i18n="oledPageRobot">Robot Page (F)</button>
+      </div>
+      <div id="oled-imu-tools" style="display:none">
+        <div class="hint" data-i18n="oledYawZeroHint">Use this when the IMU page drifts in yaw and you want the current direction to become the new zero.</div>
+        <div class="button-row">
+          <button class="ghost" onclick="zeroYaw()" data-i18n="oledYawZero">Zero Yaw</button>
+        </div>
+      </div>
+      <div id="oled-leg-selector" style="display:none">
+        <div class="hint" data-i18n="oledLegHint">When the OLED is set to the live leg page, choose which leg to preview.</div>
+        <div class="button-row">
+          <button id="oled-leg-0" class="ghost" onclick="setOledLeg(0)">0</button>
+          <button id="oled-leg-1" class="ghost" onclick="setOledLeg(1)">1</button>
+          <button id="oled-leg-2" class="ghost" onclick="setOledLeg(2)">2</button>
+          <button id="oled-leg-3" class="ghost" onclick="setOledLeg(3)">3</button>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -558,6 +759,10 @@
     let calibrationData = { legs: [] };
     let activeLeg = 0;
     let currentLang = "en";
+    let activePage = "calibration";
+    let calibrationRunning = false;
+    let currentOledPage = "rc";
+    let currentOledLeg = 0;
     const legNames = ["0 Right Front", "1 Left Front", "2 Right Rear", "3 Left Rear"];
     const legNamesZh = ["0 右前腿", "1 左前腿", "2 右后腿", "3 左后腿"];
     const jointNames = ["Joint 0 Shoulder", "Joint 1 Thigh", "Joint 2 Calf"];
@@ -582,10 +787,29 @@
       en: {
         title: "ScarGo Control Surface",
         subtitle: "Calibration, gait tuning, and test actions",
+        pageCalibration: "Calibration",
+        pageGait: "Gait Test",
+        pageOled: "OLED",
+        oledControl: "OLED Display",
+        oledHint: "Choose which content the OLED shows before the physical buttons are wired in.",
+        oledPageRc: "RC Page",
+        oledPageImu: "IMU Page",
+        oledPageCpu: "CPU Page",
+        oledPageLeg: "Live Leg Page",
+        oledPageRobot: "Robot Page (F)",
+        oledYawZeroHint: "Use this when the IMU page drifts in yaw and you want the current direction to become the new zero.",
+        oledLegHint: "When the OLED is set to the live leg page, choose which leg to preview.",
+        oledYawZero: "Zero Yaw",
+        paramLive: "Live in control",
+        paramRangeOnly: "Range constraint only",
+        paramRangesTitle: "Stored range limits",
+        paramRangesHint: "Min/max fields are already saved in config and used to clamp values, but they are not exposed as direct runtime controls on this page.",
         calibTitle: "Calibration",
-        calibDesc: "Adjust offsets in 1 degree steps. Preview updates the servo immediately. Save writes the values to flash.",
+        calibDesc: "Adjust offsets in 1 degree steps. Start calibration first to drive the servos into the calibration pose. Save writes the values to flash.",
         legMapTitle: "Tap a leg to focus",
         topView: "TOP VIEW",
+        startCalibration: "Start Calibration",
+        calibrationRunning: "Calibration Running",
         previewZero: "Preview All Zero",
         resetZero: "Reset All To Zero",
         saveCalibration: "Save Calibration",
@@ -607,15 +831,44 @@
         turnLeft: "Turn Left",
         turnRight: "Turn Right",
         jointPrefix: "Joint",
-        offsetSummary: "Offsets"
+        offsetSummary: "Offsets",
+        statusPreviewApplied: "Preview applied",
+        statusCalibrationSaved: "Calibration saved",
+        statusGaitSaved: "Gait settings saved",
+        statusActionSent: "Action sent",
+        statusDefaultsApplied: "Applied recommended defaults",
+        statusRequestFailed: "Request failed",
+        statusActionSentWithName: "Action sent: {action}",
+        statusCalibrationStarted: "Calibration pose started",
+        statusCalibrationPending: "Value updated locally. Start calibration to apply servo motion.",
+        statusCalibrationSavedAndExited: "Calibration saved and calibration mode exited"
       },
       zh: {
         title: "ScarGo 控制台",
         subtitle: "标定、步态调参与动作测试",
+        pageCalibration: "标定",
+        pageGait: "步态测试",
+        pageOled: "OLED",
+        oledControl: "OLED 显示控制",
+        oledHint: "在实体按键接好之前，先在这里选择 OLED 要显示的页面。",
+        oledPageRc: "遥控页",
+        oledPageImu: "IMU 页",
+        oledPageCpu: "CPU 页",
+        oledPageLeg: "单腿实时页",
+        oledPageRobot: "整机实时页(F)",
+        oledYawZeroHint: "当 IMU 页的偏航发生漂移时，可以把当前方向重新设为零点。",
+        oledLegHint: "当 OLED 切到单腿实时页时，在这里选择要显示的那条腿。",
+        oledYawZero: "偏航归零",
+        paramLive: "已生效",
+        paramRangeOnly: "仅范围约束",
+        paramRangesTitle: "已保存的范围限制",
+        paramRangesHint: "min/max 字段已经保存在配置里，并会用于夹紧参数范围，但当前页面没有把它们做成可直接调的运行时控制项。",
         calibTitle: "舵机标定",
-        calibDesc: "以 1 度为步进调整偏移。预览会立即驱动舵机，保存才会写入 Flash。",
+        calibDesc: "以 1 度为步进调整偏移。先点击启动标定，再让舵机进入标定位。保存才会写入 Flash。",
         legMapTitle: "点击腿位聚焦查看",
         topView: "顶视图",
+        startCalibration: "启动标定",
+        calibrationRunning: "标定中",
         previewZero: "预览全零",
         resetZero: "清零并保存",
         saveCalibration: "保存标定",
@@ -637,12 +890,78 @@
         turnLeft: "左转",
         turnRight: "右转",
         jointPrefix: "关节",
-        offsetSummary: "偏移"
+        offsetSummary: "偏移",
+        statusPreviewApplied: "预览已应用",
+        statusCalibrationSaved: "标定已保存",
+        statusGaitSaved: "步态参数已保存",
+        statusActionSent: "动作指令已发送",
+        statusDefaultsApplied: "已应用推荐默认值",
+        statusRequestFailed: "请求失败",
+        statusActionSentWithName: "动作指令已发送：{action}",
+        statusCalibrationStarted: "已进入标定位",
+        statusCalibrationPending: "数值已更新到页面，本次还未驱动舵机。点击启动标定后再应用。",
+        statusCalibrationSavedAndExited: "标定已保存，并已退出标定状态"
       }
     };
 
     function status(msg) {
       document.getElementById("status").textContent = msg;
+    }
+
+    function statusKey(key) {
+      status(t(key));
+    }
+
+    function formatI18n(key, vars = {}) {
+      let message = t(key);
+      Object.entries(vars).forEach(([name, value]) => {
+        message = message.replace(`{${name}}`, value);
+      });
+      return message;
+    }
+
+    function handleApiStatus(responseText, fallbackKey, context = {}) {
+      try {
+        const data = JSON.parse(responseText);
+        switch (data.status) {
+          case "preview":
+            statusKey("statusPreviewApplied");
+            return;
+          case "saved":
+            statusKey(fallbackKey || "statusCalibrationSaved");
+            return;
+          case "action_queued":
+            if (context.actionLabel) {
+              status(formatI18n("statusActionSentWithName", { action: context.actionLabel }));
+            } else {
+              statusKey("statusActionSent");
+            }
+            return;
+          default:
+            break;
+        }
+      } catch (error) {
+      }
+      status(responseText || t(fallbackKey || "statusRequestFailed"));
+    }
+
+    function postJson(url, payload, successKey, context = {}) {
+      return fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((r) => r.text().then((text) => ({ ok: r.ok, text })))
+        .then(({ ok, text }) => {
+          if (!ok) {
+            throw new Error(text || t("statusRequestFailed"));
+          }
+          handleApiStatus(text, successKey, context);
+        })
+        .catch((error) => {
+          status(error.message || t("statusRequestFailed"));
+          throw error;
+        });
     }
 
     function t(key) {
@@ -658,9 +977,37 @@
         const key = el.getAttribute("data-i18n");
         el.textContent = t(key);
       });
+      showPage(activePage);
+      refreshCalibrationControls();
       renderLegMap();
       renderCalibration();
       refreshStatus();
+      fetchOledPage();
+    }
+
+    function showPage(page) {
+      activePage = page;
+      document.getElementById("page-calibration").classList.toggle("active", page === "calibration");
+      document.getElementById("page-gait").classList.toggle("active", page === "gait");
+      document.getElementById("page-oled").classList.toggle("active", page === "oled");
+      document.getElementById("page-tab-calibration").classList.toggle("active", page === "calibration");
+      document.getElementById("page-tab-gait").classList.toggle("active", page === "gait");
+      document.getElementById("page-tab-oled").classList.toggle("active", page === "oled");
+    }
+
+    function refreshCalibrationControls() {
+      const startButton = document.getElementById("btn-start-calibration");
+      const gatedIds = ["btn-preview-zero", "btn-reset-zero", "btn-save-calibration"];
+
+      startButton.classList.toggle("running", calibrationRunning);
+      startButton.textContent = calibrationRunning ? t("calibrationRunning") : t("startCalibration");
+
+      gatedIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.disabled = !calibrationRunning;
+        }
+      });
     }
 
     function applyRangeConfig() {
@@ -716,7 +1063,7 @@
       phase_offset.value = gaitDefaults.diagonal_phase_offset;
       stand_height.value = gaitDefaults.stand_height_default_mm;
       updateSliderLabels();
-      status("Applied recommended gait defaults");
+      statusKey("statusDefaultsApplied");
     }
 
     function normalizeCalibrationData(data) {
@@ -745,17 +1092,12 @@
     function renderLegMap() {
       const wrap = document.getElementById("leg_map");
       wrap.innerHTML = "";
-      const center = document.createElement("div");
-      center.className = "body-map";
-      center.innerHTML = `
-        <div>
-          <div class="top">${t("topView")}</div>
-          <div class="name">ScarGo</div>
-        </div>
-      `;
-      wrap.appendChild(center);
 
-      calibrationData.legs.slice().sort((a, b) => a.leg - b.leg).forEach((leg) => {
+      const topViewOrder = [1, 0, 3, 2];
+      topViewOrder
+        .map((legId) => calibrationData.legs.find((item) => item.leg === legId))
+        .filter(Boolean)
+        .forEach((leg) => {
         const item = document.createElement("button");
         item.type = "button";
         item.className = `leg-map-card pos-${leg.leg} ${activeLeg === leg.leg ? "active" : ""}`;
@@ -826,11 +1168,34 @@
       item.offsets_deg[joint] = Number(item.offsets_deg[joint] || 0) + delta;
       document.getElementById(`v-${leg}-${joint}`).textContent = item.offsets_deg[joint];
 
-      fetch("/api/calibration/preview", {
+      if (!calibrationRunning) {
+        statusKey("statusCalibrationPending");
+        return;
+      }
+
+      postJson("/api/calibration/preview", calibrationData, "statusPreviewApplied");
+    }
+
+    function startCalibration() {
+      calibrationRunning = true;
+      refreshCalibrationControls();
+      fetch("/api/calibration/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(calibrationData),
-      }).then((r) => r.text()).then(status);
+      })
+        .then((r) => r.text().then((text) => ({ ok: r.ok, text })))
+        .then(({ ok, text }) => {
+          if (!ok) {
+            throw new Error(text || t("statusRequestFailed"));
+          }
+          statusKey("statusCalibrationStarted");
+        })
+        .catch((error) => {
+          calibrationRunning = false;
+          refreshCalibrationControls();
+          status(error.message || t("statusRequestFailed"));
+        });
     }
 
     function zeroAllLocal() {
@@ -843,11 +1208,9 @@
 
     function previewZero() {
       zeroAllLocal();
-      fetch("/api/calibration/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(calibrationData),
-      }).then((r) => r.text()).then(status);
+      calibrationRunning = true;
+      refreshCalibrationControls();
+      postJson("/api/calibration/preview", calibrationData, "statusPreviewApplied");
     }
 
     function resetZeroAndSave() {
@@ -856,11 +1219,12 @@
     }
 
     function saveCalibration() {
-      fetch("/api/calibration", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(calibrationData),
-      }).then((r) => r.text()).then(status);
+      postJson("/api/calibration", calibrationData, "statusCalibrationSaved")
+        .then(() => {
+          calibrationRunning = false;
+          refreshCalibrationControls();
+          statusKey("statusCalibrationSavedAndExited");
+        });
     }
 
     function saveGait() {
@@ -881,19 +1245,80 @@
       stand_height.value = payload.stand_height_default_mm;
       updateSliderLabels();
 
-      fetch("/api/gait", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }).then((r) => r.text()).then(status);
+      postJson("/api/gait", payload, "statusGaitSaved");
     }
 
     function sendAction(action) {
-      fetch("/api/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      }).then((r) => r.text()).then(status);
+      const actionMap = {
+        stand: t("stand"),
+        lie_down: t("lieDown"),
+        walk: t("walk"),
+        turn_left: t("turnLeft"),
+        turn_right: t("turnRight"),
+      };
+      postJson("/api/action", { action }, "statusActionSent", {
+        actionLabel: actionMap[action] || action,
+      });
+    }
+
+    function updateOledStatus(page) {
+      const labels = {
+        rc: t("oledPageRc"),
+        imu: t("oledPageImu"),
+        cpu: t("oledPageCpu"),
+        leg: t("oledPageLeg"),
+        robot: t("oledPageRobot"),
+      };
+      currentOledPage = page;
+      ["rc", "imu", "cpu", "leg", "robot"].forEach((name) => {
+        const el = document.getElementById(`oled-page-${name}`);
+        if (el) {
+          const selected = page === name;
+          el.classList.toggle("active", selected);
+          el.classList.toggle("selected", selected);
+        }
+      });
+      document.getElementById("oled-imu-tools").style.display = page === "imu" ? "grid" : "none";
+      document.getElementById("oled-leg-selector").style.display = page === "leg" ? "grid" : "none";
+      document.getElementById("oled_status").textContent = `${currentLang === "zh" ? "当前 OLED 页面" : "Current OLED page"}: ${labels[page] || page}`;
+      [0, 1, 2, 3].forEach((leg) => {
+        const el = document.getElementById(`oled-leg-${leg}`);
+        if (el) {
+          const selected = page === "leg" && currentOledLeg === leg;
+          el.classList.toggle("active", selected);
+          el.classList.toggle("selected", selected);
+        }
+      });
+    }
+
+    function fetchOledPage() {
+      return fetch("/api/oled/page")
+        .then((r) => r.json())
+        .then((data) => {
+          currentOledLeg = Number.isFinite(Number(data.leg)) ? Number(data.leg) : 0;
+          updateOledStatus(data.page || "rc");
+          if ((data.page || "rc") === "leg") {
+            document.getElementById("oled_status").textContent += `${currentLang === "zh" ? "，腿" : ", leg"} ${currentOledLeg}`;
+          }
+        });
+    }
+
+    function setOledPage(page) {
+      postJson("/api/oled/page", { page }, "statusActionSent", {
+        actionLabel: `${currentLang === "zh" ? "OLED" : "OLED"} -> ${page}`,
+      }).then(() => fetchOledPage());
+    }
+
+    function setOledLeg(leg) {
+      postJson("/api/oled/page", { page: "leg", leg }, "statusActionSent", {
+        actionLabel: `${currentLang === "zh" ? "OLED单腿" : "OLED leg"} ${leg}`,
+      }).then(() => fetchOledPage());
+    }
+
+    function zeroYaw() {
+      postJson("/api/imu/yaw-zero", {}, "statusActionSent", {
+        actionLabel: currentLang === "zh" ? "IMU 偏航归零" : "IMU yaw zero",
+      });
     }
 
     function refreshStatus() {
@@ -907,7 +1332,132 @@
             `${currentLang === "zh" ? "俯仰" : "pitch"}: ${data.pitch_deg.toFixed(2)} deg\n` +
             `${currentLang === "zh" ? "偏航" : "yaw"}: ${data.yaw_deg.toFixed(2)} deg\n` +
             `${currentLang === "zh" ? "油门" : "throttle"}: ${data.throttle.toFixed(2)}`;
+
+          updateOledStatus(data.oled_page || "rc");
         });
+    }
+
+    function rotateImuPoint(x, y, z, rollDeg, pitchDeg, yawDeg) {
+      const roll = rollDeg * Math.PI / 180;
+      const pitch = pitchDeg * Math.PI / 180;
+      const yaw = yawDeg * Math.PI / 180;
+
+      const cr = Math.cos(roll);
+      const sr = Math.sin(roll);
+      const cp = Math.cos(pitch);
+      const sp = Math.sin(pitch);
+      const cy = Math.cos(yaw);
+      const sy = Math.sin(yaw);
+
+      const x1 = x;
+      const y1 = y * cp - z * sp;
+      const z1 = y * sp + z * cp;
+
+      const x2 = x1 * cr + z1 * sr;
+      const y2 = y1;
+      const z2 = -x1 * sr + z1 * cr;
+
+      return [
+        x2 * cy - y2 * sy,
+        x2 * sy + y2 * cy,
+        z2,
+      ];
+    }
+
+    function projectImuPoint([x, y, z]) {
+      const azimuthSin = 0.25881905;
+      const azimuthCos = 0.96592583;
+      const tiltSin = 0.08715574;
+      const tiltCos = 0.99619470;
+      const viewX = x * azimuthCos - y * azimuthSin;
+      const viewY = x * azimuthSin + y * azimuthCos;
+      return [viewX, -(viewY * tiltSin + z * tiltCos)];
+    }
+
+    function drawMarker(ctx, x, y, color, label) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = "bold 14px sans-serif";
+      ctx.fillText(label, x + 10, y + 4);
+    }
+
+    function drawImuCube(canvasId, rollDeg, pitchDeg, yawDeg) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) {
+        return;
+      }
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const vertices = [
+        [-0.67, -1.0, -0.10], [0.67, -1.0, -0.10], [0.67, 1.0, -0.10], [-0.67, 1.0, -0.10],
+        [-0.67, -1.0, 0.10], [0.67, -1.0, 0.10], [0.67, 1.0, 0.10], [-0.67, 1.0, 0.10],
+      ];
+      const edges = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7],
+      ];
+      const projectedFloat = vertices
+        .map(([x, y, z]) => rotateImuPoint(x, y, z, rollDeg, pitchDeg, yawDeg))
+        .map((point) => projectImuPoint(point));
+      const frontFloat = projectImuPoint(rotateImuPoint(0, 1.0, 0, rollDeg, pitchDeg, yawDeg));
+      const upFloat = projectImuPoint(rotateImuPoint(0, 0, 0.75, rollDeg, pitchDeg, yawDeg));
+
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      [...projectedFloat, frontFloat, upFloat].forEach(([px, py]) => {
+        minX = Math.min(minX, px);
+        maxX = Math.max(maxX, px);
+        minY = Math.min(minY, py);
+        maxY = Math.max(maxY, py);
+      });
+      const spanX = Math.max(maxX - minX, 0.2);
+      const spanY = Math.max(maxY - minY, 0.2);
+      const margin = 8;
+      const scale = Math.min((w - margin * 2) / spanX, (h - margin * 2) / spanY);
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const projected = projectedFloat.map(([px, py]) => [
+        w / 2 + (px - centerX) * scale,
+        h / 2 + (py - centerY) * scale,
+      ]);
+      const front = [
+        w / 2 + (frontFloat[0] - centerX) * scale,
+        h / 2 + (frontFloat[1] - centerY) * scale,
+      ];
+      const up = [
+        w / 2 + (upFloat[0] - centerX) * scale,
+        h / 2 + (upFloat[1] - centerY) * scale,
+      ];
+
+      ctx.fillStyle = "rgba(24,58,55,0.18)";
+      ctx.beginPath();
+      ctx.moveTo(projected[0][0], projected[0][1]);
+      ctx.lineTo(projected[1][0], projected[1][1]);
+      ctx.lineTo(projected[5][0], projected[5][1]);
+      ctx.lineTo(projected[4][0], projected[4][1]);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#1f7a8c";
+      edges.forEach(([a, b]) => {
+        ctx.beginPath();
+        ctx.moveTo(projected[a][0], projected[a][1]);
+        ctx.lineTo(projected[b][0], projected[b][1]);
+        ctx.stroke();
+      });
+
+      drawMarker(ctx, front[0], front[1], "#d67d3e", "F");
+      drawMarker(ctx, up[0], up[1], "#1f7a8c", "U");
     }
 
     function loadAll() {

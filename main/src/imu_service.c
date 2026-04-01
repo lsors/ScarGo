@@ -17,6 +17,8 @@ static attitude_state_t s_attitude;
 static i2c_master_dev_handle_t s_device;
 static bool s_ready;
 static uint16_t s_device_addr;
+static uint32_t s_log_ticks;
+static float s_yaw_zero_offset_deg;
 
 static bool write_register(uint8_t reg, uint8_t value)
 {
@@ -65,6 +67,7 @@ void imu_service_init(void)
     }
 
     s_ready = true;
+    s_log_ticks = 0;
     ESP_LOGI(TAG, "MPU6050 service initialized at 100 Hz addr=0x%02x", s_device_addr);
 }
 
@@ -90,12 +93,12 @@ void imu_service_tick(void)
     float ay = accel_to_g(ay_raw);
     float az = accel_to_g(az_raw);
     float gx = gyro_to_dps(gx_raw);
-    float gy = gyro_to_dps(gy_raw);
+    float gy = -gyro_to_dps(gy_raw);
     float gz = gyro_to_dps(gz_raw);
 
     const float dt = 1.0f / (float)SCARGO_IMU_RATE_HZ;
     float accel_roll = atan2f(ay, az) * 180.0f / (float)M_PI;
-    float accel_pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * 180.0f / (float)M_PI;
+    float accel_pitch = -atan2f(-ax, sqrtf(ay * ay + az * az)) * 180.0f / (float)M_PI;
     const float alpha = 0.96f;
 
     s_attitude.roll_deg = alpha * (s_attitude.roll_deg + gx * dt) + (1.0f - alpha) * accel_roll;
@@ -105,9 +108,33 @@ void imu_service_tick(void)
     s_attitude.pitch_rate_dps = gy;
     s_attitude.yaw_rate_dps = gz;
     s_attitude.ready = true;
+
+    s_log_ticks++;
+    if (s_log_ticks >= SCARGO_IMU_RATE_HZ) {
+        s_log_ticks = 0;
+        ESP_LOGI(TAG,
+                 "attitude r/p/y=%.1f/%.1f/%.1f deg rate=%.1f/%.1f/%.1f dps accel=%.2f/%.2f/%.2f g",
+                 s_attitude.roll_deg,
+                 s_attitude.pitch_deg,
+                 s_attitude.yaw_deg,
+                 s_attitude.roll_rate_dps,
+                 s_attitude.pitch_rate_dps,
+                 s_attitude.yaw_rate_dps,
+                 ax,
+                 ay,
+                 az);
+    }
 }
 
 attitude_state_t imu_service_get_attitude(void)
 {
-    return s_attitude;
+    attitude_state_t output = s_attitude;
+    output.yaw_deg -= s_yaw_zero_offset_deg;
+    return output;
+}
+
+void imu_service_zero_yaw(void)
+{
+    s_yaw_zero_offset_deg = s_attitude.yaw_deg;
+    ESP_LOGI(TAG, "Yaw zeroed, offset=%.2f deg", s_yaw_zero_offset_deg);
 }
