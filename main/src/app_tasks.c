@@ -41,9 +41,15 @@ static void rc_task(void *arg)
 {
     (void)arg;
     const TickType_t delay_ticks = pdMS_TO_TICKS(1000 / SCARGO_CONTROL_RATE_HZ);
+    bool last_link_up = false;
 
     while (true) {
         rc_input_tick();
+        rc_command_t command = rc_input_get_latest();
+        if (!last_link_up && command.link_up) {
+            buzzer_service_elrs_connect_beep();
+        }
+        last_link_up = command.link_up;
         vTaskDelay(delay_ticks);
     }
 }
@@ -78,6 +84,10 @@ void app_tasks_start(const system_config_t *config)
     imu_service_init();
     rc_input_init();
     display_service_init();
+    display_service_set_page((display_page_t)config->oled.page);
+    display_service_set_leg_preview_selection(config->oled.leg);
+    display_service_set_leg_preview_view((display_preview_view_t)config->oled.leg_view);
+    display_service_set_robot_preview_view((display_preview_view_t)config->oled.robot_view);
     web_ui_start((system_config_t *)config);
 
     ESP_LOGI(TAG, "Creating FreeRTOS tasks");

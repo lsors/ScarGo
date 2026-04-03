@@ -126,6 +126,54 @@ static bool display_page_from_name(const char *name, display_page_t *out_page)
     return false;
 }
 
+static const char *preview_view_name(display_preview_view_t view)
+{
+    switch (view) {
+    case DISPLAY_PREVIEW_VIEW_FRONT:
+        return "front";
+    case DISPLAY_PREVIEW_VIEW_BACK:
+        return "back";
+    case DISPLAY_PREVIEW_VIEW_LEFT:
+        return "left";
+    case DISPLAY_PREVIEW_VIEW_RIGHT:
+        return "right";
+    case DISPLAY_PREVIEW_VIEW_TOP:
+        return "top";
+    case DISPLAY_PREVIEW_VIEW_ISO:
+    default:
+        return "iso";
+    }
+}
+
+static bool preview_view_from_name(const char *name, display_preview_view_t *out_view)
+{
+    if (strcmp(name, "front") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_FRONT;
+        return true;
+    }
+    if (strcmp(name, "back") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_BACK;
+        return true;
+    }
+    if (strcmp(name, "left") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_LEFT;
+        return true;
+    }
+    if (strcmp(name, "right") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_RIGHT;
+        return true;
+    }
+    if (strcmp(name, "top") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_TOP;
+        return true;
+    }
+    if (strcmp(name, "iso") == 0 || strcmp(name, "stereo") == 0) {
+        *out_view = DISPLAY_PREVIEW_VIEW_ISO;
+        return true;
+    }
+    return false;
+}
+
 static char *read_request_body(httpd_req_t *req)
 {
     if (req->content_len <= 0) {
@@ -455,6 +503,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "target_height_mm", target.height_mm);
     cJSON_AddStringToObject(root, "oled_page", display_page_name(display_service_get_page()));
     cJSON_AddNumberToObject(root, "oled_leg", display_service_get_leg_preview_selection());
+    cJSON_AddStringToObject(root, "oled_leg_view", preview_view_name(display_service_get_leg_preview_view()));
+    cJSON_AddStringToObject(root, "oled_robot_view", preview_view_name(display_service_get_robot_preview_view()));
 
     char *json = cJSON_PrintUnformatted(root);
     esp_err_t err = send_json(req, json);
@@ -468,6 +518,8 @@ static esp_err_t oled_page_get_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "page", display_page_name(display_service_get_page()));
     cJSON_AddNumberToObject(root, "leg", display_service_get_leg_preview_selection());
+    cJSON_AddStringToObject(root, "leg_view", preview_view_name(display_service_get_leg_preview_view()));
+    cJSON_AddStringToObject(root, "robot_view", preview_view_name(display_service_get_robot_preview_view()));
     char *json = cJSON_PrintUnformatted(root);
     esp_err_t err = send_json(req, json);
     cJSON_free(json);
@@ -501,11 +553,40 @@ static esp_err_t oled_page_post_handler(httpd_req_t *req)
     }
 
     display_service_set_page(page);
+    s_config->oled.page = page;
     cJSON *leg_item = cJSON_GetObjectItem(root, "leg");
     if (cJSON_IsNumber(leg_item)) {
         display_service_set_leg_preview_selection(leg_item->valueint);
+        s_config->oled.leg = leg_item->valueint;
     }
+
+    cJSON *leg_view_item = cJSON_GetObjectItem(root, "leg_view");
+    if (cJSON_IsString(leg_view_item)) {
+        display_preview_view_t leg_view;
+        if (!preview_view_from_name(leg_view_item->valuestring, &leg_view)) {
+            cJSON_Delete(root);
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid leg view");
+        }
+        display_service_set_leg_preview_view(leg_view);
+        s_config->oled.leg_view = (int)leg_view;
+    }
+
+    cJSON *robot_view_item = cJSON_GetObjectItem(root, "robot_view");
+    if (cJSON_IsString(robot_view_item)) {
+        display_preview_view_t robot_view;
+        if (!preview_view_from_name(robot_view_item->valuestring, &robot_view)) {
+            cJSON_Delete(root);
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid robot view");
+        }
+        display_service_set_robot_preview_view(robot_view);
+        s_config->oled.robot_view = (int)robot_view;
+    }
+
+    config_store_validate(s_config);
     cJSON_Delete(root);
+    if (!storage_service_save_oled(&s_config->oled)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save oled");
+    }
     return send_json(req, "{\"status\":\"oled_page_set\"}");
 }
 

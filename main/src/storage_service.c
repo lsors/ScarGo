@@ -14,6 +14,7 @@
 static const char *TAG = "storage";
 static const char *CALIBRATION_PATH = "/spiffs/calibration.json";
 static const char *GAIT_PATH = "/spiffs/gait.json";
+static const char *OLED_PATH = "/spiffs/oled.json";
 
 static void log_json_blob(const char *label, const char *json_text)
 {
@@ -103,6 +104,16 @@ static cJSON *create_gait_json(const gait_config_t *config)
     cJSON_AddNumberToObject(root, "stance_ratio_min", config->stance_ratio_min);
     cJSON_AddNumberToObject(root, "stance_ratio_max", config->stance_ratio_max);
     cJSON_AddNumberToObject(root, "diagonal_phase_offset", config->diagonal_phase_offset);
+    return root;
+}
+
+static cJSON *create_oled_json(const oled_config_t *config)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "page", config->page);
+    cJSON_AddNumberToObject(root, "leg", config->leg);
+    cJSON_AddNumberToObject(root, "leg_view", config->leg_view);
+    cJSON_AddNumberToObject(root, "robot_view", config->robot_view);
     return root;
 }
 
@@ -200,6 +211,26 @@ static void load_gait_from_json(gait_config_t *config, cJSON *root)
     }
 }
 
+static void load_oled_from_json(oled_config_t *config, cJSON *root)
+{
+    const struct {
+        const char *key;
+        int *target;
+    } int_fields[] = {
+        {"page", &config->page},
+        {"leg", &config->leg},
+        {"leg_view", &config->leg_view},
+        {"robot_view", &config->robot_view},
+    };
+
+    for (size_t i = 0; i < sizeof(int_fields) / sizeof(int_fields[0]); ++i) {
+        cJSON *item = cJSON_GetObjectItem(root, int_fields[i].key);
+        if (cJSON_IsNumber(item)) {
+            *int_fields[i].target = item->valueint;
+        }
+    }
+}
+
 bool storage_service_init(void)
 {
     esp_vfs_spiffs_conf_t conf = {
@@ -254,6 +285,19 @@ bool storage_service_load_all(system_config_t *config)
         free(gait_text);
     }
 
+    char *oled_text = read_text_file(OLED_PATH);
+    if (oled_text == NULL) {
+        ok &= storage_service_save_oled(&config->oled);
+    } else {
+        log_json_blob("loaded oled", oled_text);
+        cJSON *root = cJSON_Parse(oled_text);
+        if (root != NULL) {
+            load_oled_from_json(&config->oled, root);
+            cJSON_Delete(root);
+        }
+        free(oled_text);
+    }
+
     return ok;
 }
 
@@ -267,6 +311,11 @@ bool storage_service_save_gait(const gait_config_t *config)
     return save_json_file(GAIT_PATH, create_gait_json(config));
 }
 
+bool storage_service_save_oled(const oled_config_t *config)
+{
+    return save_json_file(OLED_PATH, create_oled_json(config));
+}
+
 char *storage_service_read_calibration_json(void)
 {
     return read_text_file(CALIBRATION_PATH);
@@ -275,4 +324,9 @@ char *storage_service_read_calibration_json(void)
 char *storage_service_read_gait_json(void)
 {
     return read_text_file(GAIT_PATH);
+}
+
+char *storage_service_read_oled_json(void)
+{
+    return read_text_file(OLED_PATH);
 }

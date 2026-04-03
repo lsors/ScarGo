@@ -17,6 +17,7 @@ static const float SCARGO_WALK_START_DURATION_S = 0.45f;
 static const float SCARGO_WALK_CYCLE_FAST_MS = 150.0f;
 static const float SCARGO_WALK_CYCLE_MEDIUM_MS = 300.0f;
 static const float SCARGO_WALK_CYCLE_SLOW_MS = 3000.0f;
+static const float SCARGO_STAND_TRANSLATION_LIMIT_MM = 50.0f;
 
 typedef enum {
     ROBOT_POSTURE_STAND = 0,
@@ -183,6 +184,11 @@ static float gait_step_height_from_sc(int16_t aux_sc)
     return s_config.gait.step_height_mm;
 }
 
+static float walk_step_scale_from_throttle(const rc_command_t *command)
+{
+    return clampf_local(command->throttle + 1.0f, 0.0f, 2.0f);
+}
+
 static body_pose_t move_pose_towards(body_pose_t current, body_pose_t target, float max_delta_deg)
 {
     current.roll_deg = move_towards(current.roll_deg, target.roll_deg, max_delta_deg);
@@ -312,18 +318,23 @@ static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_m
     if (mode == ROBOT_MODE_STAND) {
         target.height_mm = stand_height_from_sb(command->aux_sb);
         target.yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg;
-        target.pitch_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
-        target.roll_deg = command->roll * s_config.gait.max_body_roll_deg;
+        if (command->aux_sb < 0) {
+            target.pitch_deg = 0.0f;
+            target.roll_deg = 0.0f;
+        } else {
+            // User convention:
+            // pitch stick -> body rotation around +X
+            // roll stick -> body rotation around +Y
+            target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
+            target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
+        }
         return target;
     }
 
-    target.height_mm = map_centered_height(command->pitch,
-                                           s_config.gait.stand_height_min_mm,
-                                           s_config.gait.stand_height_default_mm,
-                                           s_config.gait.stand_height_max_mm);
-    target.yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg;
+    target.height_mm = s_config.gait.stand_height_default_mm;
+    target.yaw_deg = 0.0f;
     target.pitch_deg = 0.0f;
-    target.roll_deg = command->roll * s_config.gait.max_body_roll_deg;
+    target.roll_deg = 0.0f;
     return target;
 }
 
@@ -412,17 +423,31 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
         .roll_deg = target.roll_deg,
     };
     body_pose_t solved_pose;
+    vec3f_t feet_target[SCARGO_LEG_COUNT];
 
     fill_mid_pose(s_target_angles);
+    copy_feet(feet_target, s_default_feet_world);
 
     if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active) {
         pose_target = (body_pose_t){0};
         target.height_mm = SCARGO_LIE_HEIGHT_MM;
         copy_feet(s_current_feet_world, s_rest_feet_world);
     } else if (!s_transition_active) {
+        if (command->aux_sb < 0) {
+            float body_shift_x = clampf_local(command->roll, -1.0f, 1.0f) * SCARGO_STAND_TRANSLATION_LIMIT_MM;
+            float body_shift_y = clampf_local(command->pitch, -1.0f, 1.0f) * SCARGO_STAND_TRANSLATION_LIMIT_MM;
+            for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+                feet_target[leg].x_mm -= body_shift_x;
+                feet_target[leg].y_mm -= body_shift_y;
+            }
+        }
         s_current_height_mm = move_towards(s_current_height_mm, target.height_mm, height_speed_mm_s * dt_s);
         s_current_body_pose = move_pose_towards(s_current_body_pose, pose_target, body_speed_deg_s * dt_s);
-        copy_feet(s_current_feet_world, s_default_feet_world);
+        for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+            s_current_feet_world[leg].x_mm = move_towards(s_current_feet_world[leg].x_mm, feet_target[leg].x_mm, height_speed_mm_s * dt_s);
+            s_current_feet_world[leg].y_mm = move_towards(s_current_feet_world[leg].y_mm, feet_target[leg].y_mm, height_speed_mm_s * dt_s);
+            s_current_feet_world[leg].z_mm = feet_target[leg].z_mm;
+        }
     }
 
     solved_pose = s_current_body_pose;
@@ -446,6 +471,9 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
                                       vec3f_t feet_world[SCARGO_LEG_COUNT])
 {
     kinematics_default_feet(feet_world, stand_height);
+    const float step_vec_y = clampf_local(command->pitch, -1.0f, 1.0f) * stride;
+    const float step_vec_x = clampf_local(command->roll, -1.0f, 1.0f) * stride;
+    const float yaw_diff_y = clampf_local(command->yaw, -1.0f, 1.0f) * stride * 0.5f;
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
         float group_phase = phase + ((leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_RIGHT) ? 0.0f : 0.5f);
@@ -457,18 +485,20 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
         bool in_swing = group_phase >= s_config.gait.stance_ratio;
         float phase_local;
         float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
+        float leg_step_y = step_vec_y + side_sign * yaw_diff_y;
+        float leg_step_x = step_vec_x;
 
         if (in_swing) {
             phase_local = (group_phase - s_config.gait.stance_ratio) / fmaxf(1.0f - s_config.gait.stance_ratio, 0.01f);
             float cycloid = cycloid_phase(phase_local);
-            feet_world[leg].y_mm += (-0.5f + cycloid) * stride + command->yaw * side_sign * stride * 0.35f;
+            feet_world[leg].y_mm += (-0.5f + cycloid) * leg_step_y;
+            feet_world[leg].x_mm += (-0.5f + cycloid) * leg_step_x;
             feet_world[leg].z_mm += step_height * sinf((float)M_PI * phase_local);
         } else {
             phase_local = group_phase / fmaxf(s_config.gait.stance_ratio, 0.01f);
-            feet_world[leg].y_mm += (0.5f - phase_local) * stride + command->yaw * side_sign * stride * 0.35f;
+            feet_world[leg].y_mm += (0.5f - phase_local) * leg_step_y;
+            feet_world[leg].x_mm += (0.5f - phase_local) * leg_step_x;
         }
-
-        feet_world[leg].x_mm += command->roll * 18.0f;
     }
     apply_balance(pose, attitude);
 }
@@ -477,7 +507,7 @@ static void apply_walk_pose(const rc_command_t *command, const attitude_state_t 
 {
     static uint32_t steady_tick;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
-    float throttle_ratio = (command->throttle + 1.0f) * 0.5f;
+    float throttle_ratio = walk_step_scale_from_throttle(command);
     float step_height = gait_step_height_from_sc(command->aux_sc);
     float stride = throttle_ratio * step_height * s_config.gait.step_scale;
     float cycle = fmaxf(gait_cycle_from_sb(command->aux_sb) / 1000.0f, 0.15f);
@@ -607,16 +637,19 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
 {
     bool walk_mode = command->walk_mode || s_mode == ROBOT_MODE_WALK;
     robot_target_pose_t target = {
-        .yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg,
-        .pitch_deg = -command->pitch * s_config.gait.max_body_pitch_deg,
-        .roll_deg = command->roll * s_config.gait.max_body_roll_deg,
+        .yaw_deg = walk_mode ? 0.0f : -command->yaw * s_config.gait.max_body_yaw_deg,
+        .pitch_deg = 0.0f,
+        .roll_deg = 0.0f,
         .height_mm = walk_mode
-                         ? map_centered_height(command->pitch,
-                                               s_config.gait.stand_height_min_mm,
-                                               s_config.gait.stand_height_default_mm,
-                                               s_config.gait.stand_height_max_mm)
+                         ? s_config.gait.stand_height_default_mm
                          : stand_height_from_sb(command->aux_sb),
     };
+    if (!walk_mode) {
+        if (command->aux_sb >= 0) {
+            target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
+            target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
+        }
+    }
     return target;
 }
 
@@ -754,15 +787,12 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
         begin_posture_transition(ROBOT_POSTURE_STAND,
-                                 map_centered_height(command->throttle,
-                                                     s_config.gait.stand_height_min_mm,
-                                                     s_config.gait.stand_height_default_mm,
-                                                     s_config.gait.stand_height_max_mm),
+                                 stand_height_from_sb(command->aux_sb),
                                  s_default_feet_world,
                                  &(body_pose_t){
                                      .yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg,
-                                     .pitch_deg = -command->pitch * s_config.gait.max_body_pitch_deg,
-                                     .roll_deg = command->roll * s_config.gait.max_body_roll_deg,
+                                     .pitch_deg = command->aux_sb >= 0 ? command->roll * s_config.gait.max_body_roll_deg : 0.0f,
+                                     .roll_deg = command->aux_sb >= 0 ? -command->pitch * s_config.gait.max_body_pitch_deg : 0.0f,
                                  },
                                  SCARGO_POSTURE_LIFT_MM * 0.5f);
         s_mode = ROBOT_MODE_STAND;

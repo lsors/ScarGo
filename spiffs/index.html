@@ -537,6 +537,11 @@
       gap: 8px;
       padding-top: 2px;
     }
+    .view-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
     @media (max-width: 900px) {
       .calib-layout {
         grid-template-columns: 120px minmax(0, 1fr);
@@ -751,6 +756,26 @@
           <button id="oled-leg-2" class="ghost" onclick="setOledLeg(2)">2</button>
           <button id="oled-leg-3" class="ghost" onclick="setOledLeg(3)">3</button>
         </div>
+        <div class="hint" data-i18n="oledLegViewHint">Choose a fixed camera angle for the live leg preview.</div>
+        <div class="view-grid">
+          <button id="oled-leg-view-front" class="ghost" onclick="setOledLegView('front')" data-i18n="viewFront">Front</button>
+          <button id="oled-leg-view-back" class="ghost" onclick="setOledLegView('back')" data-i18n="viewBack">Back</button>
+          <button id="oled-leg-view-left" class="ghost" onclick="setOledLegView('left')" data-i18n="viewLeft">Left</button>
+          <button id="oled-leg-view-right" class="ghost" onclick="setOledLegView('right')" data-i18n="viewRight">Right</button>
+          <button id="oled-leg-view-top" class="ghost" onclick="setOledLegView('top')" data-i18n="viewTop">Top</button>
+          <button id="oled-leg-view-iso" class="ghost" onclick="setOledLegView('iso')" data-i18n="viewIso">3D</button>
+        </div>
+      </div>
+      <div id="oled-robot-view-selector" style="display:none">
+        <div class="hint" data-i18n="oledRobotViewHint">Choose a fixed camera angle for the live robot preview.</div>
+        <div class="view-grid">
+          <button id="oled-robot-view-front" class="ghost" onclick="setOledRobotView('front')" data-i18n="viewFront">Front</button>
+          <button id="oled-robot-view-back" class="ghost" onclick="setOledRobotView('back')" data-i18n="viewBack">Back</button>
+          <button id="oled-robot-view-left" class="ghost" onclick="setOledRobotView('left')" data-i18n="viewLeft">Left</button>
+          <button id="oled-robot-view-right" class="ghost" onclick="setOledRobotView('right')" data-i18n="viewRight">Right</button>
+          <button id="oled-robot-view-top" class="ghost" onclick="setOledRobotView('top')" data-i18n="viewTop">Top</button>
+          <button id="oled-robot-view-iso" class="ghost" onclick="setOledRobotView('iso')" data-i18n="viewIso">3D</button>
+        </div>
       </div>
     </section>
   </main>
@@ -763,6 +788,8 @@
     let calibrationRunning = false;
     let currentOledPage = "rc";
     let currentOledLeg = 0;
+    let currentOledLegView = "iso";
+    let currentOledRobotView = "iso";
     const legNames = ["0 Right Front", "1 Left Front", "2 Right Rear", "3 Left Rear"];
     const legNamesZh = ["0 右前腿", "1 左前腿", "2 右后腿", "3 左后腿"];
     const jointNames = ["Joint 0 Shoulder", "Joint 1 Thigh", "Joint 2 Calf"];
@@ -799,7 +826,15 @@
         oledPageRobot: "Robot Page (F)",
         oledYawZeroHint: "Use this when the IMU page drifts in yaw and you want the current direction to become the new zero.",
         oledLegHint: "When the OLED is set to the live leg page, choose which leg to preview.",
+        oledLegViewHint: "Choose a fixed camera angle for the live leg preview.",
+        oledRobotViewHint: "Choose a fixed camera angle for the live robot preview.",
         oledYawZero: "Zero Yaw",
+        viewFront: "Front",
+        viewBack: "Back",
+        viewLeft: "Left",
+        viewRight: "Right",
+        viewTop: "Top",
+        viewIso: "3D",
         paramLive: "Live in control",
         paramRangeOnly: "Range constraint only",
         paramRangesTitle: "Stored range limits",
@@ -858,7 +893,15 @@
         oledPageRobot: "整机实时页(F)",
         oledYawZeroHint: "当 IMU 页的偏航发生漂移时，可以把当前方向重新设为零点。",
         oledLegHint: "当 OLED 切到单腿实时页时，在这里选择要显示的那条腿。",
+        oledLegViewHint: "为单腿实时预览选择一个固定观察视角。",
+        oledRobotViewHint: "为整机实时预览选择一个固定观察视角。",
         oledYawZero: "偏航归零",
+        viewFront: "前",
+        viewBack: "后",
+        viewLeft: "左",
+        viewRight: "右",
+        viewTop: "上",
+        viewIso: "立体",
         paramLive: "已生效",
         paramRangeOnly: "仅范围约束",
         paramRangesTitle: "已保存的范围限制",
@@ -1261,6 +1304,18 @@
       });
     }
 
+    function previewViewLabel(view) {
+      const labels = {
+        front: t("viewFront"),
+        back: t("viewBack"),
+        left: t("viewLeft"),
+        right: t("viewRight"),
+        top: t("viewTop"),
+        iso: t("viewIso"),
+      };
+      return labels[view] || view;
+    }
+
     function updateOledStatus(page) {
       const labels = {
         rc: t("oledPageRc"),
@@ -1280,7 +1335,7 @@
       });
       document.getElementById("oled-imu-tools").style.display = page === "imu" ? "grid" : "none";
       document.getElementById("oled-leg-selector").style.display = page === "leg" ? "grid" : "none";
-      document.getElementById("oled_status").textContent = `${currentLang === "zh" ? "当前 OLED 页面" : "Current OLED page"}: ${labels[page] || page}`;
+      document.getElementById("oled-robot-view-selector").style.display = page === "robot" ? "grid" : "none";
       [0, 1, 2, 3].forEach((leg) => {
         const el = document.getElementById(`oled-leg-${leg}`);
         if (el) {
@@ -1289,6 +1344,29 @@
           el.classList.toggle("selected", selected);
         }
       });
+      ["front", "back", "left", "right", "top", "iso"].forEach((view) => {
+        const legEl = document.getElementById(`oled-leg-view-${view}`);
+        if (legEl) {
+          const selected = page === "leg" && currentOledLegView === view;
+          legEl.classList.toggle("active", selected);
+          legEl.classList.toggle("selected", selected);
+        }
+        const robotEl = document.getElementById(`oled-robot-view-${view}`);
+        if (robotEl) {
+          const selected = page === "robot" && currentOledRobotView === view;
+          robotEl.classList.toggle("active", selected);
+          robotEl.classList.toggle("selected", selected);
+        }
+      });
+
+      let statusText = `${currentLang === "zh" ? "当前 OLED 页面" : "Current OLED page"}: ${labels[page] || page}`;
+      if (page === "leg") {
+        statusText += `${currentLang === "zh" ? "，腿" : ", leg"} ${currentOledLeg}`;
+        statusText += `${currentLang === "zh" ? "，视角 " : ", view "}${previewViewLabel(currentOledLegView)}`;
+      } else if (page === "robot") {
+        statusText += `${currentLang === "zh" ? "，视角 " : ", view "}${previewViewLabel(currentOledRobotView)}`;
+      }
+      document.getElementById("oled_status").textContent = statusText;
     }
 
     function fetchOledPage() {
@@ -1296,10 +1374,9 @@
         .then((r) => r.json())
         .then((data) => {
           currentOledLeg = Number.isFinite(Number(data.leg)) ? Number(data.leg) : 0;
+          currentOledLegView = data.leg_view || "iso";
+          currentOledRobotView = data.robot_view || "iso";
           updateOledStatus(data.page || "rc");
-          if ((data.page || "rc") === "leg") {
-            document.getElementById("oled_status").textContent += `${currentLang === "zh" ? "，腿" : ", leg"} ${currentOledLeg}`;
-          }
         });
     }
 
@@ -1312,6 +1389,18 @@
     function setOledLeg(leg) {
       postJson("/api/oled/page", { page: "leg", leg }, "statusActionSent", {
         actionLabel: `${currentLang === "zh" ? "OLED单腿" : "OLED leg"} ${leg}`,
+      }).then(() => fetchOledPage());
+    }
+
+    function setOledLegView(view) {
+      postJson("/api/oled/page", { page: "leg", leg_view: view }, "statusActionSent", {
+        actionLabel: `${currentLang === "zh" ? "OLED单腿视角" : "OLED leg view"} ${previewViewLabel(view)}`,
+      }).then(() => fetchOledPage());
+    }
+
+    function setOledRobotView(view) {
+      postJson("/api/oled/page", { page: "robot", robot_view: view }, "statusActionSent", {
+        actionLabel: `${currentLang === "zh" ? "OLED整机视角" : "OLED robot view"} ${previewViewLabel(view)}`,
       }).then(() => fetchOledPage());
     }
 
@@ -1331,8 +1420,11 @@
             `${currentLang === "zh" ? "横滚" : "roll"}: ${data.roll_deg.toFixed(2)} deg\n` +
             `${currentLang === "zh" ? "俯仰" : "pitch"}: ${data.pitch_deg.toFixed(2)} deg\n` +
             `${currentLang === "zh" ? "偏航" : "yaw"}: ${data.yaw_deg.toFixed(2)} deg\n` +
-            `${currentLang === "zh" ? "油门" : "throttle"}: ${data.throttle.toFixed(2)}`;
+          `${currentLang === "zh" ? "油门" : "throttle"}: ${data.throttle.toFixed(2)}`;
 
+          currentOledLeg = Number.isFinite(Number(data.oled_leg)) ? Number(data.oled_leg) : currentOledLeg;
+          currentOledLegView = data.oled_leg_view || currentOledLegView;
+          currentOledRobotView = data.oled_robot_view || currentOledRobotView;
           updateOledStatus(data.oled_page || "rc");
         });
     }

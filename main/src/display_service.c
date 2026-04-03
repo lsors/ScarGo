@@ -22,6 +22,8 @@
 static const char *TAG = "display";
 static display_page_t s_page = DISPLAY_PAGE_ROBOT_PREVIEW;
 static int s_leg_preview_selection = SCARGO_LEG_FRONT_RIGHT;
+static display_preview_view_t s_leg_preview_view = DISPLAY_PREVIEW_VIEW_ISO;
+static display_preview_view_t s_robot_preview_view = DISPLAY_PREVIEW_VIEW_ISO;
 static i2c_master_dev_handle_t s_oled;
 static bool s_ready;
 static uint8_t s_buffer[128 * 8];
@@ -238,6 +240,41 @@ static void project_point(float x, float y, float z, float *out_x, float *out_y)
     *out_y = -(view_y * tilt_sin + z * tilt_cos);
 }
 
+static bool preview_view_valid(display_preview_view_t view)
+{
+    return view >= DISPLAY_PREVIEW_VIEW_FRONT && view <= DISPLAY_PREVIEW_VIEW_ISO;
+}
+
+static void project_preview_point(float x, float y, float z, display_preview_view_t view, float *out_x, float *out_y)
+{
+    switch (view) {
+    case DISPLAY_PREVIEW_VIEW_FRONT:
+        *out_x = x;
+        *out_y = -z;
+        break;
+    case DISPLAY_PREVIEW_VIEW_BACK:
+        *out_x = -x;
+        *out_y = -z;
+        break;
+    case DISPLAY_PREVIEW_VIEW_LEFT:
+        *out_x = y;
+        *out_y = -z;
+        break;
+    case DISPLAY_PREVIEW_VIEW_RIGHT:
+        *out_x = -y;
+        *out_y = -z;
+        break;
+    case DISPLAY_PREVIEW_VIEW_TOP:
+        *out_x = x;
+        *out_y = -y;
+        break;
+    case DISPLAY_PREVIEW_VIEW_ISO:
+    default:
+        project_point(x, y, z, out_x, out_y);
+        break;
+    }
+}
+
 static void render_imu_box_at(float roll_deg, float pitch_deg, float yaw_deg,
                               int region_x, int region_y, int region_w, int region_h)
 {
@@ -407,13 +444,13 @@ static void render_leg_preview_page(void)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
-    rc_command_t command = rc_input_get_latest();
     float angles[SCARGO_JOINTS_PER_LEG];
     char label[24];
     char angle_line[22];
     float shoulder_servo_deg;
     float thigh_servo_deg;
     float calf_servo_deg;
+    float shoulder_deg;
     float shoulder;
     float thigh_math;
     float knee_deg;
@@ -430,15 +467,6 @@ static void render_leg_preview_page(void)
     const float margin = 2.0f;
     const float side_sign = (s_leg_preview_selection == SCARGO_LEG_FRONT_LEFT ||
                              s_leg_preview_selection == SCARGO_LEG_REAR_LEFT) ? 1.0f : -1.0f;
-    const float cam_yaw = command.yaw * 90.0f * (float)M_PI / 180.0f;
-    const float cam_roll = command.roll * 90.0f * (float)M_PI / 180.0f;
-    const float cam_pitch = command.pitch * 90.0f * (float)M_PI / 180.0f;
-    const float cy = cosf(cam_yaw);
-    const float sy = sinf(cam_yaw);
-    const float cr = cosf(cam_roll);
-    const float sr = sinf(cam_roll);
-    const float cp = cosf(cam_pitch);
-    const float sp = sinf(cam_pitch);
 
     oled_clear();
     if (!robot_control_get_leg_target_angles(s_leg_preview_selection, angles)) {
@@ -450,7 +478,9 @@ static void render_leg_preview_page(void)
     shoulder_servo_deg = angles[SCARGO_JOINT_SHOULDER];
     thigh_servo_deg = angles[SCARGO_JOINT_THIGH];
     calf_servo_deg = angles[SCARGO_JOINT_CALF];
-    shoulder = (shoulder_servo_deg - 90.0f) * (float)M_PI / 180.0f;
+    shoulder_deg = (float)leg_bindings[s_leg_preview_selection].shoulder_sign *
+                   (shoulder_servo_deg - 90.0f);
+    shoulder = shoulder_deg * (float)M_PI / 180.0f;
     thigh_math = (90.0f - thigh_servo_deg);
     knee_deg = (float)leg_bindings[s_leg_preview_selection].knee_coupling_sign *
                (calf_servo_deg - thigh_servo_deg - leg_bindings[s_leg_preview_selection].knee_coupling_offset_deg);
@@ -488,20 +518,7 @@ static void render_leg_preview_page(void)
         float x = points3d[i][0] * side_sign;
         float y = points3d[i][1];
         float z = points3d[i][2];
-
-        float x1 = x * cy - y * sy;
-        float y1 = x * sy + y * cy;
-        float z1 = z;
-
-        float x2 = x1 * cr + z1 * sr;
-        float y2 = y1;
-        float z2 = -x1 * sr + z1 * cr;
-
-        float y3 = y2 * cp - z2 * sp;
-        float z3 = y2 * sp + z2 * cp;
-
-        projected_float[i][0] = -y3;
-        projected_float[i][1] = -z3;
+        project_preview_point(x, y, z, s_leg_preview_view, &projected_float[i][0], &projected_float[i][1]);
     }
 
     {
@@ -545,10 +562,7 @@ static void render_leg_preview_page(void)
              (int)lroundf(calf_servo_deg));
     oled_draw_text(2, 7, angle_line);
 
-    // Axis reference for the current leg-view convention:
-    // +X is the robot's left side, -X is the robot's right side.
-    // The default camera looks from +X toward -X, so the screen shows the +Y/+Z plane.
-    // Apply the same RC-driven view transform so the axis cue and leg preview stay aligned.
+    // Keep the axis cue aligned with the selected fixed preview view.
     {
         const int origin_x = 112;
         const int origin_y = 35;
@@ -564,20 +578,12 @@ static void render_leg_preview_page(void)
             float x = axes[i][0];
             float y = axes[i][1];
             float z = axes[i][2];
+            float axis_x;
+            float axis_y;
+            project_preview_point(x, y, z, s_leg_preview_view, &axis_x, &axis_y);
 
-            float x1 = x * cy - y * sy;
-            float y1 = x * sy + y * cy;
-            float z1 = z;
-
-            float x2 = x1 * cr + z1 * sr;
-            float y2 = y1;
-            float z2 = -x1 * sr + z1 * cr;
-
-            float y3 = y2 * cp - z2 * sp;
-            float z3 = y2 * sp + z2 * cp;
-
-            int end_x = origin_x + (int)lroundf(-y3);
-            int end_y = origin_y + (int)lroundf(-z3);
+            int end_x = origin_x + (int)lroundf(axis_x);
+            int end_y = origin_y + (int)lroundf(axis_y);
             oled_draw_line(origin_x, origin_y, end_x, end_y);
 
             int dx = end_x - origin_x;
@@ -653,10 +659,6 @@ static bool compute_leg_model_points(int leg, float points[4][3])
 static void render_robot_preview_page(void)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
-    rc_command_t command = rc_input_get_latest();
-    const float cam_roll = command.roll * 70.0f;
-    const float cam_pitch = command.pitch * 70.0f;
-    const float cam_yaw = command.yaw * 70.0f;
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
     const float body[4][3] = {
@@ -686,9 +688,8 @@ static void render_robot_preview_page(void)
     oled_clear();
 
     for (int i = 0; i < 4; ++i) {
-        float rx, ry, rz;
-        rotate_point(body[i][0], body[i][1], body[i][2], cam_roll, cam_pitch, cam_yaw, &rx, &ry, &rz);
-        project_point(rx, ry, rz, &body_projected[i][0], &body_projected[i][1]);
+        project_preview_point(body[i][0], body[i][1], body[i][2], s_robot_preview_view,
+                              &body_projected[i][0], &body_projected[i][1]);
         if (body_projected[i][0] < min_x) min_x = body_projected[i][0];
         if (body_projected[i][0] > max_x) max_x = body_projected[i][0];
         if (body_projected[i][1] < min_y) min_y = body_projected[i][1];
@@ -707,10 +708,8 @@ static void render_robot_preview_page(void)
             {front_right[0], front_right[1], front_right[2]},
         };
         for (int i = 0; i < 4; ++i) {
-            float rx, ry, rz;
-            rotate_point(arrow_vertices[i][0], arrow_vertices[i][1], arrow_vertices[i][2],
-                         cam_roll, cam_pitch, cam_yaw, &rx, &ry, &rz);
-            project_point(rx, ry, rz, &front_arrow[i][0], &front_arrow[i][1]);
+            project_preview_point(arrow_vertices[i][0], arrow_vertices[i][1], arrow_vertices[i][2],
+                                  s_robot_preview_view, &front_arrow[i][0], &front_arrow[i][1]);
             if (front_arrow[i][0] < min_x) min_x = front_arrow[i][0];
             if (front_arrow[i][0] > max_x) max_x = front_arrow[i][0];
             if (front_arrow[i][1] < min_y) min_y = front_arrow[i][1];
@@ -723,13 +722,11 @@ static void render_robot_preview_page(void)
             return;
         }
         for (int joint = 0; joint < 4; ++joint) {
-            float rx, ry, rz;
-            rotate_point(leg_points_3d[leg][joint][0],
-                         leg_points_3d[leg][joint][1],
-                         leg_points_3d[leg][joint][2],
-                         cam_roll, cam_pitch, cam_yaw,
-                         &rx, &ry, &rz);
-            project_point(rx, ry, rz, &leg_projected[leg][joint][0], &leg_projected[leg][joint][1]);
+            project_preview_point(leg_points_3d[leg][joint][0],
+                                  leg_points_3d[leg][joint][1],
+                                  leg_points_3d[leg][joint][2],
+                                  s_robot_preview_view,
+                                  &leg_projected[leg][joint][0], &leg_projected[leg][joint][1]);
             if (leg_projected[leg][joint][0] < min_x) min_x = leg_projected[leg][joint][0];
             if (leg_projected[leg][joint][0] > max_x) max_x = leg_projected[leg][joint][0];
             if (leg_projected[leg][joint][1] < min_y) min_y = leg_projected[leg][joint][1];
@@ -914,4 +911,30 @@ void display_service_set_leg_preview_selection(int leg)
         return;
     }
     s_leg_preview_selection = leg;
+}
+
+display_preview_view_t display_service_get_leg_preview_view(void)
+{
+    return s_leg_preview_view;
+}
+
+void display_service_set_leg_preview_view(display_preview_view_t view)
+{
+    if (!preview_view_valid(view)) {
+        return;
+    }
+    s_leg_preview_view = view;
+}
+
+display_preview_view_t display_service_get_robot_preview_view(void)
+{
+    return s_robot_preview_view;
+}
+
+void display_service_set_robot_preview_view(display_preview_view_t view)
+{
+    if (!preview_view_valid(view)) {
+        return;
+    }
+    s_robot_preview_view = view;
 }
