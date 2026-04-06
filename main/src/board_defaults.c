@@ -20,25 +20,25 @@ static const scargo_gpio_map_t GPIO_MAP = {
 };
 
 static const scargo_mechanics_t MECHANICS = {
-    .body_width_mm = 100.0f,
-    .body_length_mm = 150.0f,
+    .body_width_mm = 90.0f,
+    .body_length_mm = 195.0f,
     .shoulder_length_mm = 40.0f,
     .thigh_length_mm = 100.0f,
-    .calf_length_mm = 100.0f,
+    .calf_length_mm = 110.0f,
 };
 
 static const scargo_servo_binding_t SERVO_MAP[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG] = {
-    {{2, 1}, {1, 1}, {0, -1}},
-    {{13, -1}, {14, 1}, {15, 1}},
-    {{5, -1}, {6, -1}, {7, 1}},
-    {{10, 1}, {9, 1}, {8, 1}},
+    {{2, -1}, {1, -1}, {0, -1}},     //0  右前 ok
+    {{13, -1}, {14, 1}, {15, 1}},   //1  左前
+    {{5, 1}, {6, -1}, {7, -1}},    //2  右后 
+    {{10, 1}, {9, 1}, {8, 1}},      //3  左后 ok
 };
 
 static const scargo_leg_kinematics_binding_t LEG_KINEMATICS[SCARGO_LEG_COUNT] = {
-    [SCARGO_LEG_FRONT_RIGHT] = {.shoulder_sign = -1, .knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
-    [SCARGO_LEG_FRONT_LEFT] = {.shoulder_sign = 1, .knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
-    [SCARGO_LEG_REAR_RIGHT] = {.shoulder_sign = -1, .knee_coupling_sign = 1, .knee_coupling_offset_deg = -90.0f},
-    [SCARGO_LEG_REAR_LEFT] = {.shoulder_sign = 1, .knee_coupling_sign = -1, .knee_coupling_offset_deg = 90.0f},
+    [SCARGO_LEG_FRONT_RIGHT] = {.shoulder_sign = -1, .beta_sign = -1, .beta_offset_deg = 90.0f},
+    [SCARGO_LEG_FRONT_LEFT] = {.shoulder_sign = 1, .beta_sign = 1, .beta_offset_deg = -90.0f},
+    [SCARGO_LEG_REAR_RIGHT] = {.shoulder_sign = -1, .beta_sign = -1, .beta_offset_deg = 90.0f},
+    [SCARGO_LEG_REAR_LEFT] = {.shoulder_sign = 1, .beta_sign = 1, .beta_offset_deg = -90.0f},
 };
 
 static const scargo_buzzer_mode_t BUZZER_MODE = SCARGO_BUZZER_MODE_GPIO;

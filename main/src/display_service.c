@@ -15,8 +15,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu_service.h"
+#include "kinematics.h"
 #include "rc_input.h"
 #include "robot_control.h"
+#include "servo_output.h"
 #include "shared_i2c.h"
 
 static const char *TAG = "display";
@@ -29,6 +31,11 @@ static bool s_ready;
 static uint8_t s_buffer[128 * 8];
 static uint16_t s_oled_addr;
 static TickType_t s_boot_splash_deadline;
+
+typedef enum {
+    DISPLAY_LAYOUT_LANDSCAPE = 0,
+    DISPLAY_LAYOUT_PORTRAIT_CCW = 1,
+} display_layout_t;
 
 static const uint8_t FONT_5X7[][5] = {
     {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5f,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},{0x14,0x7f,0x14,0x7f,0x14},
@@ -94,6 +101,142 @@ static void oled_draw_text(int x, int page, const char *text)
     while (*text != '\0' && x <= 122) {
         oled_draw_char(x, page, *text++);
         x += 6;
+    }
+}
+
+static void oled_set_pixel(int x, int y);
+
+static void oled_draw_char_rotated_cw(int x, int y, char ch)
+{
+    int index = ch - 32;
+    if (index < 0 || index >= (int)(sizeof(FONT_5X7) / sizeof(FONT_5X7[0]))) {
+        index = 0;
+    }
+
+    for (int col = 0; col < 5; ++col) {
+        uint8_t bits = FONT_5X7[index][col];
+        for (int row = 0; row < 7; ++row) {
+            if ((bits >> row) & 0x01U) {
+                oled_set_pixel(x + (6 - row), y + col);
+            }
+        }
+    }
+}
+
+static void oled_draw_text_rotated_cw(int x, int y, const char *text)
+{
+    while (*text != '\0') {
+        oled_draw_char_rotated_cw(x, y, *text++);
+        y += 6;
+    }
+}
+
+static void oled_draw_text_rotated_cw_compact(int x, int y, const char *text)
+{
+    while (*text != '\0') {
+        oled_draw_char_rotated_cw(x, y, *text++);
+        y += 5;
+    }
+}
+
+static void oled_draw_char_rotated_ccw(int x, int y, char ch)
+{
+    int index = ch - 32;
+    if (index < 0 || index >= (int)(sizeof(FONT_5X7) / sizeof(FONT_5X7[0]))) {
+        index = 0;
+    }
+
+    for (int col = 0; col < 5; ++col) {
+        uint8_t bits = FONT_5X7[index][col];
+        for (int row = 0; row < 7; ++row) {
+            if ((bits >> row) & 0x01U) {
+                oled_set_pixel(x + row, y + (4 - col));
+            }
+        }
+    }
+}
+
+static void oled_draw_text_rotated_ccw(int x, int y, const char *text)
+{
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len; ++i) {
+        oled_draw_char_rotated_ccw(x, y, text[len - 1 - i]);
+        y += 6;
+    }
+}
+
+static void oled_draw_text_rotated_ccw_compact(int x, int y, const char *text)
+{
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len; ++i) {
+        oled_draw_char_rotated_ccw(x, y, text[len - 1 - i]);
+        y += 5;
+    }
+}
+
+/*
+ * 显示布局辅助层
+ * ==============
+ *
+ * 这里把“横屏/竖屏”的常用变换抽成统一接口，避免页面代码里散落着：
+ * - 点位旋转
+ * - 文本方向切换
+ * - 方向常量判断
+ *
+ * 目前先支持两种：
+ * - DISPLAY_LAYOUT_LANDSCAPE   : 原始横屏
+ * - DISPLAY_LAYOUT_PORTRAIT_CCW: 基于横屏内容逆时针旋转 90 度
+ *
+ * 后面如果别的页面也要旋转显示，只需要复用这里的接口。
+ */
+static void display_layout_project_point(display_layout_t layout, float src_x, float src_y,
+                                         float *dst_x, float *dst_y)
+{
+    switch (layout) {
+    case DISPLAY_LAYOUT_PORTRAIT_CCW:
+        /*
+         * 按“原横屏内容逆时针 90 度后”的观察语义来放置几何点。
+         * 如果腿本体方向与用户感知相反，只需要在这里翻转，不要去改页面里的局部公式。
+         */
+        *dst_x = src_y;
+        *dst_y = -src_x;
+        break;
+    case DISPLAY_LAYOUT_LANDSCAPE:
+    default:
+        *dst_x = src_x;
+        *dst_y = src_y;
+        break;
+    }
+}
+
+static void display_layout_draw_title(display_layout_t layout, int x, int y, const char *text)
+{
+    switch (layout) {
+    case DISPLAY_LAYOUT_PORTRAIT_CCW:
+        /*
+         * 文本锚点统一按“左对齐”理解：
+         * - x/y 永远表示旋转后视角下的左上起点
+         * - 文字阅读顺序始终保持正常，不允许反着写
+         */
+        oled_draw_text_rotated_ccw(x, y, text);
+        break;
+    case DISPLAY_LAYOUT_LANDSCAPE:
+    default:
+        oled_draw_text(x, y / 8, text);
+        break;
+    }
+}
+
+static void display_layout_draw_footer(display_layout_t layout, int x, int y, const char *text)
+{
+    switch (layout) {
+    case DISPLAY_LAYOUT_PORTRAIT_CCW:
+        oled_draw_text_rotated_ccw_compact(x, y, text);
+        break;
+    case DISPLAY_LAYOUT_LANDSCAPE:
+    default:
+        oled_draw_text(x, y / 8, text);
+        break;
     }
 }
 
@@ -361,11 +504,6 @@ static void render_imu_box_at(float roll_deg, float pitch_deg, float yaw_deg,
     oled_draw_text(up_x > 116 ? 110 : up_x + 3, up_y / 8, "U");
 }
 
-static void render_imu_box(float roll_deg, float pitch_deg, float yaw_deg)
-{
-    render_imu_box_at(roll_deg, pitch_deg, yaw_deg, 1, 1, 126, 62);
-}
-
 static void oled_flush(void)
 {
     for (int page = 0; page < 8; ++page) {
@@ -442,108 +580,127 @@ static void render_cpu_page(void)
 
 static void render_leg_preview_page(void)
 {
-    const scargo_mechanics_t *mech = board_defaults_mechanics();
-    const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
-    float angles[SCARGO_JOINTS_PER_LEG];
-    char label[24];
-    char angle_line[22];
-    float shoulder_servo_deg;
-    float thigh_servo_deg;
-    float calf_servo_deg;
-    float shoulder_deg;
-    float shoulder;
-    float thigh_math;
-    float knee_deg;
-    float knee_rad;
-    float shoulder_rad;
-    float thigh_rad;
-    float points3d[4][3];
+    const display_layout_t layout = DISPLAY_LAYOUT_PORTRAIT_CCW;
+    char label[16];
+    vec3f_t chain_points[4];
+    vec3f_t feet_world[SCARGO_LEG_COUNT];
+    vec3f_t feet_body[SCARGO_LEG_COUNT];
+    leg_joint_pose_t joint_pose;
     float projected_float[4][2];
     int projected[4][2];
-    const int region_x = 0;
-    const int region_y = 0;
-    const int region_w = 106;
-    const int region_h = 34;
+    /*
+     * 单腿页采用“逆时针 90 度后的竖屏视角”：
+     * - 左上角保留给 LEGx
+     * - 腿本体在剩余区域做水平/垂直居中
+     * - 当前不显示底部角度文字，所以把更多空间留给腿本体
+     */
+    const int title_left = 1;
+    const int title_top = 1;
+    const int region_x = 12;
+    const int region_y = 2;
+    const int region_w = 114;
+    const int region_h = 61;
     const float margin = 2.0f;
-    const float side_sign = (s_leg_preview_selection == SCARGO_LEG_FRONT_LEFT ||
-                             s_leg_preview_selection == SCARGO_LEG_REAR_LEFT) ? 1.0f : -1.0f;
 
     oled_clear();
-    if (!robot_control_get_leg_target_angles(s_leg_preview_selection, angles)) {
+    if (!robot_control_get_current_feet_world(feet_world)) {
+        oled_draw_text(18, 3, "LEG PREVIEW");
+        oled_draw_text(26, 5, "NO DATA");
+        return;
+    }
+    /*
+     * ====================
+     * 第三层：预览显示层
+     * ====================
+     *
+     * 单腿实时页只做“纯几何预览”：
+     * 1. 先从控制层读取当前足端世界坐标与机身姿态
+     * 2. 转回机身局部 feet_body
+     * 3. 用 preview_geometry 解出 shoulder / alpha / beta
+     * 4. 再把几何链点画出来
+     *
+     * 这里刻意不走：
+     * - SERVO_MAP
+     * - 标定偏置
+     * - 小腿真实执行修正
+     *
+     * 因为这个页面要表达的是“当前控制目标在几何上长什么样”，
+     * 而不是“PCA9685 最终打给舵机的电角度”。
+     */
+    body_pose_t pose = robot_control_get_current_body_pose();
+    kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
+    if (!kinematics_solve_leg_preview_geometry((scargo_leg_id_t)s_leg_preview_selection,
+                                               &feet_body[s_leg_preview_selection],
+                                               &joint_pose) ||
+        !kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)s_leg_preview_selection, &joint_pose,
+                                                         chain_points)) {
         oled_draw_text(18, 3, "LEG PREVIEW");
         oled_draw_text(26, 5, "NO DATA");
         return;
     }
 
-    shoulder_servo_deg = angles[SCARGO_JOINT_SHOULDER];
-    thigh_servo_deg = angles[SCARGO_JOINT_THIGH];
-    calf_servo_deg = angles[SCARGO_JOINT_CALF];
-    shoulder_deg = (float)leg_bindings[s_leg_preview_selection].shoulder_sign *
-                   (shoulder_servo_deg - 90.0f);
-    shoulder = shoulder_deg * (float)M_PI / 180.0f;
-    thigh_math = (90.0f - thigh_servo_deg);
-    knee_deg = (float)leg_bindings[s_leg_preview_selection].knee_coupling_sign *
-               (calf_servo_deg - thigh_servo_deg - leg_bindings[s_leg_preview_selection].knee_coupling_offset_deg);
-    thigh_rad = thigh_math * (float)M_PI / 180.0f;
-    knee_rad = knee_deg * (float)M_PI / 180.0f;
-    shoulder_rad = shoulder;
-
-    points3d[0][0] = 0.0f;
-    points3d[0][1] = 0.0f;
-    points3d[0][2] = 0.0f;
-
-    points3d[1][0] = mech->shoulder_length_mm * cosf(shoulder_rad);
-    points3d[1][1] = 0.0f;
-    points3d[1][2] = -mech->shoulder_length_mm * sinf(shoulder_rad);
-
-    {
-        float knee_plane_y = mech->thigh_length_mm * sinf(thigh_rad);
-        float knee_plane_z = -mech->thigh_length_mm * cosf(thigh_rad);
-        points3d[2][0] = mech->shoulder_length_mm * cosf(shoulder_rad) + knee_plane_z * sinf(shoulder_rad);
-        points3d[2][1] = knee_plane_y;
-        points3d[2][2] = -mech->shoulder_length_mm * sinf(shoulder_rad) + knee_plane_z * cosf(shoulder_rad);
-    }
-
-    {
-        float foot_plane_y = mech->thigh_length_mm * sinf(thigh_rad) +
-                             mech->calf_length_mm * sinf(thigh_rad + knee_rad);
-        float foot_plane_z = -(mech->thigh_length_mm * cosf(thigh_rad) +
-                               mech->calf_length_mm * cosf(thigh_rad + knee_rad));
-        points3d[3][0] = mech->shoulder_length_mm * cosf(shoulder_rad) + foot_plane_z * sinf(shoulder_rad);
-        points3d[3][1] = foot_plane_y;
-        points3d[3][2] = -mech->shoulder_length_mm * sinf(shoulder_rad) + foot_plane_z * cosf(shoulder_rad);
-    }
-
     for (int i = 0; i < 4; ++i) {
-        float x = points3d[i][0] * side_sign;
-        float y = points3d[i][1];
-        float z = points3d[i][2];
+        float x = chain_points[i].x_mm;
+        float y = chain_points[i].y_mm;
+        float z = chain_points[i].z_mm;
         project_preview_point(x, y, z, s_leg_preview_view, &projected_float[i][0], &projected_float[i][1]);
     }
 
     {
+        const scargo_mechanics_t *mech = board_defaults_mechanics();
         const float leg_max_y = mech->thigh_length_mm + mech->calf_length_mm;
         const float leg_max_z = mech->shoulder_length_mm + mech->thigh_length_mm + mech->calf_length_mm;
-        const float fixed_min_x = -leg_max_y * 0.02f;
-        const float fixed_max_x = leg_max_y * 0.56f;
-        const float fixed_min_y = -leg_max_z * 0.60f;
-        const float fixed_max_y = leg_max_z * 0.02f;
-        float span_x = fmaxf(fixed_max_x - fixed_min_x, 1.0f);
-        float span_y = fmaxf(fixed_max_y - fixed_min_y, 1.0f);
+        /*
+         * 单腿页采用更自然的竖向观感：
+         * - 基于原横屏内容整体旋转 90 度后的视角
+         * - 先旋转投影点
+         * - 再根据旋转后的真实边界做自适应缩放
+         * - 优先保证腿本体不碰 OLED 边缘
+         */
+        float min_rx = 9999.0f;
+        float max_rx = -9999.0f;
+        float min_ry = 9999.0f;
+        float max_ry = -9999.0f;
+        for (int i = 0; i < 4; ++i) {
+            float rx;
+            float ry;
+            display_layout_project_point(layout, projected_float[i][0], projected_float[i][1], &rx, &ry);
+            if (rx < min_rx) min_rx = rx;
+            if (rx > max_rx) max_rx = rx;
+            if (ry < min_ry) min_ry = ry;
+            if (ry > max_ry) max_ry = ry;
+        }
+
+        /*
+         * 给一点额外的几何安全边距，避免腿在极限姿态下压到 OLED 边缘。
+         * 文字允许更靠边，但腿本体要完整显示。
+         */
+        min_rx -= leg_max_y * 0.05f;
+        max_rx += leg_max_y * 0.05f;
+        min_ry -= leg_max_z * 0.05f;
+        max_ry += leg_max_z * 0.05f;
+
+        float span_x = fmaxf(max_rx - min_rx, 1.0f);
+        float span_y = fmaxf(max_ry - min_ry, 1.0f);
         float scale = fminf(((float)region_w - margin * 2.0f) / span_x,
                             ((float)region_h - margin * 2.0f) / span_y);
-        float center_x = (fixed_min_x + fixed_max_x) * 0.5f;
-        float center_y = (fixed_min_y + fixed_max_y) * 0.5f;
-        int cx = region_x + region_w / 2 - 6;
-        int cy = region_y + region_h / 2 - 7;
+        float center_x = (min_rx + max_rx) * 0.5f;
+        float center_y = (min_ry + max_ry) * 0.5f;
+        int cx = region_x + region_w / 2;
+        int cy = region_y + region_h / 2;
         for (int i = 0; i < 4; ++i) {
-            projected[i][0] = cx + (int)lroundf((projected_float[i][0] - center_x) * scale);
-            projected[i][1] = cy + (int)lroundf((projected_float[i][1] - center_y) * scale);
+            float rotated_x;
+            float rotated_y;
+            display_layout_project_point(layout,
+                                         projected_float[i][0],
+                                         projected_float[i][1],
+                                         &rotated_x,
+                                         &rotated_y);
+            projected[i][0] = cx + (int)lroundf((rotated_x - center_x) * scale);
+            projected[i][1] = cy + (int)lroundf((rotated_y - center_y) * scale);
         }
     }
 
-    // Shoulder mount block makes the leg root direction easier to read.
-    oled_fill_rect(projected[0][0] - 4, projected[0][1] - 3, 8, 6);
     oled_draw_line(projected[0][0], projected[0][1], projected[1][0], projected[1][1]);
     oled_draw_line(projected[1][0], projected[1][1], projected[2][0], projected[2][1]);
     oled_draw_line(projected[2][0], projected[2][1], projected[3][0], projected[3][1]);
@@ -552,107 +709,39 @@ static void render_leg_preview_page(void)
     oled_draw_marker(projected[2][0], projected[2][1]);
     oled_draw_marker(projected[3][0], projected[3][1]);
 
-    snprintf(label, sizeof(label), "LEG %d", s_leg_preview_selection);
-    oled_draw_text(0, 0, label);
-    snprintf(angle_line,
-             sizeof(angle_line),
-             "S%3d T%3d C%3d",
-             (int)lroundf(shoulder_servo_deg),
-             (int)lroundf(thigh_servo_deg),
-             (int)lroundf(calf_servo_deg));
-    oled_draw_text(2, 7, angle_line);
-
-    // Keep the axis cue aligned with the selected fixed preview view.
-    {
-        const int origin_x = 112;
-        const int origin_y = 35;
-        const float axis_len = 15.0f;
-        const float axes[3][3] = {
-            {axis_len, 0.0f, 0.0f},   // +X
-            {0.0f, axis_len, 0.0f},   // +Y
-            {0.0f, 0.0f, axis_len},   // +Z
-        };
-        const char labels[3] = {'X', 'Y', 'Z'};
-
-        for (int i = 0; i < 3; ++i) {
-            float x = axes[i][0];
-            float y = axes[i][1];
-            float z = axes[i][2];
-            float axis_x;
-            float axis_y;
-            project_preview_point(x, y, z, s_leg_preview_view, &axis_x, &axis_y);
-
-            int end_x = origin_x + (int)lroundf(axis_x);
-            int end_y = origin_y + (int)lroundf(axis_y);
-            oled_draw_line(origin_x, origin_y, end_x, end_y);
-
-            int dx = end_x - origin_x;
-            int dy = end_y - origin_y;
-            if (dx > 0) {
-                oled_draw_line(end_x, end_y, end_x - 3, end_y - 1);
-                oled_draw_line(end_x, end_y, end_x - 3, end_y + 1);
-            } else if (dx < 0) {
-                oled_draw_line(end_x, end_y, end_x + 3, end_y - 1);
-                oled_draw_line(end_x, end_y, end_x + 3, end_y + 1);
-            } else if (dy < 0) {
-                oled_draw_line(end_x, end_y, end_x - 1, end_y + 3);
-                oled_draw_line(end_x, end_y, end_x + 1, end_y + 3);
-            } else {
-                oled_draw_line(end_x, end_y, end_x - 1, end_y - 3);
-                oled_draw_line(end_x, end_y, end_x + 1, end_y - 3);
-            }
-
-            char axis_label[2] = {labels[i], '\0'};
-            oled_draw_text(end_x + (dx >= 0 ? 2 : -6), end_y / 8, axis_label);
-        }
-        oled_draw_marker(origin_x, origin_y);
-    }
+    snprintf(label, sizeof(label), "LEG%d", s_leg_preview_selection);
+    display_layout_draw_title(layout, title_left, title_top, label);
 }
 
 static bool compute_leg_model_points(int leg, float points[4][3])
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
-    const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
-    float angles[SCARGO_JOINTS_PER_LEG];
-    if (!robot_control_get_leg_target_angles(leg, angles)) {
+    vec3f_t chain_points[4];
+    vec3f_t feet_world[SCARGO_LEG_COUNT];
+    vec3f_t feet_body[SCARGO_LEG_COUNT];
+    leg_joint_pose_t joint_pose;
+    if (!robot_control_get_current_feet_world(feet_world)) {
         return false;
     }
-
+    /*
+     * 整机实时页与单腿实时页必须使用同一条“纯几何预览链”。
+     * 这里不允许额外混入任何执行层补偿，否则单腿页和整机页就会分叉。
+     */
+    body_pose_t pose = robot_control_get_current_body_pose();
+    kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
+    if (!kinematics_solve_leg_preview_geometry((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
+        !kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &joint_pose, chain_points)) {
+        return false;
+    }
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
     const float hip_x = (leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_LEFT) ? half_width : -half_width;
     const float hip_y = (leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_FRONT_RIGHT) ? half_length : -half_length;
-    const float side_sign = (leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_LEFT) ? 1.0f : -1.0f;
-    const float shoulder_deg = (float)leg_bindings[leg].shoulder_sign * (angles[SCARGO_JOINT_SHOULDER] - 90.0f);
-    const float thigh_math_deg = 90.0f - angles[SCARGO_JOINT_THIGH];
-    const float knee_deg = (float)leg_bindings[leg].knee_coupling_sign *
-                           (angles[SCARGO_JOINT_CALF] - angles[SCARGO_JOINT_THIGH] -
-                            leg_bindings[leg].knee_coupling_offset_deg);
-
-    const float shoulder = shoulder_deg * (float)M_PI / 180.0f;
-    const float thigh = thigh_math_deg * (float)M_PI / 180.0f;
-    const float knee = knee_deg * (float)M_PI / 180.0f;
-
-    const float knee_plane_y = mech->thigh_length_mm * sinf(thigh);
-    const float knee_plane_z = -mech->thigh_length_mm * cosf(thigh);
-    const float foot_plane_y = knee_plane_y + mech->calf_length_mm * sinf(thigh + knee);
-    const float foot_plane_z = knee_plane_z - mech->calf_length_mm * cosf(thigh + knee);
-
-    points[0][0] = hip_x;
-    points[0][1] = hip_y;
-    points[0][2] = 0.0f;
-
-    points[1][0] = hip_x + side_sign * (mech->shoulder_length_mm * cosf(shoulder));
-    points[1][1] = hip_y;
-    points[1][2] = -mech->shoulder_length_mm * sinf(shoulder);
-
-    points[2][0] = hip_x + side_sign * (mech->shoulder_length_mm * cosf(shoulder) + knee_plane_z * sinf(shoulder));
-    points[2][1] = hip_y + knee_plane_y;
-    points[2][2] = -mech->shoulder_length_mm * sinf(shoulder) + knee_plane_z * cosf(shoulder);
-
-    points[3][0] = hip_x + side_sign * (mech->shoulder_length_mm * cosf(shoulder) + foot_plane_z * sinf(shoulder));
-    points[3][1] = hip_y + foot_plane_y;
-    points[3][2] = -mech->shoulder_length_mm * sinf(shoulder) + foot_plane_z * cosf(shoulder);
+    for (int i = 0; i < 4; ++i) {
+        points[i][0] = hip_x + chain_points[i].x_mm;
+        points[i][1] = hip_y + chain_points[i].y_mm;
+        points[i][2] = chain_points[i].z_mm;
+    }
     return true;
 }
 

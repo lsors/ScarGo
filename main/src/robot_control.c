@@ -14,9 +14,6 @@ static const float SCARGO_LIE_HEIGHT_MM = 92.0f;
 static const float SCARGO_POSTURE_LIFT_MM = 18.0f;
 static const float SCARGO_POSTURE_LIFT_LIE_MM = 10.0f;
 static const float SCARGO_WALK_START_DURATION_S = 0.45f;
-static const float SCARGO_WALK_CYCLE_FAST_MS = 150.0f;
-static const float SCARGO_WALK_CYCLE_MEDIUM_MS = 300.0f;
-static const float SCARGO_WALK_CYCLE_SLOW_MS = 3000.0f;
 static const float SCARGO_STAND_TRANSLATION_LIMIT_MM = 50.0f;
 
 typedef enum {
@@ -53,17 +50,25 @@ static bool s_transition_active;
 static robot_posture_t s_posture = ROBOT_POSTURE_STAND;
 static robot_motion_speed_t s_motion_speed = ROBOT_MOTION_SPEED_MEDIUM;
 static bool s_calibration_mode_active;
+static bool s_servo_enabled;
+static int16_t s_last_aux_sa;
 static int16_t s_last_aux_sd;
 static float s_calibration_start_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
 static float s_calibration_target_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
 static float s_calibration_progress_s;
 static float s_calibration_duration_s;
+static vec3f_t s_calibration_preview_start_feet_world[SCARGO_LEG_COUNT];
+static vec3f_t s_calibration_preview_target_feet_world[SCARGO_LEG_COUNT];
+static body_pose_t s_calibration_preview_pose;
+static float s_calibration_preview_height_mm;
 static walk_phase_t s_walk_phase = WALK_PHASE_IDLE;
 static float s_walk_phase_progress;
 static float s_roll_integral;
 static float s_pitch_integral;
 static float s_prev_roll_error;
 static float s_prev_pitch_error;
+
+static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
 
 static float clampf_local(float value, float min_value, float max_value)
 {
@@ -74,6 +79,44 @@ static float clampf_local(float value, float min_value, float max_value)
         return max_value;
     }
     return value;
+}
+
+static float deg2rad_local(float deg)
+{
+    return deg * ((float)M_PI / 180.0f);
+}
+
+static vec3f_t rotate_x_local(vec3f_t input, float radians)
+{
+    const float c = cosf(radians);
+    const float s = sinf(radians);
+    return (vec3f_t){
+        .x_mm = input.x_mm,
+        .y_mm = input.y_mm * c - input.z_mm * s,
+        .z_mm = input.y_mm * s + input.z_mm * c,
+    };
+}
+
+static vec3f_t rotate_y_local(vec3f_t input, float radians)
+{
+    const float c = cosf(radians);
+    const float s = sinf(radians);
+    return (vec3f_t){
+        .x_mm = input.x_mm * c + input.z_mm * s,
+        .y_mm = input.y_mm,
+        .z_mm = -input.x_mm * s + input.z_mm * c,
+    };
+}
+
+static vec3f_t rotate_z_local(vec3f_t input, float radians)
+{
+    const float c = cosf(radians);
+    const float s = sinf(radians);
+    return (vec3f_t){
+        .x_mm = input.x_mm * c - input.y_mm * s,
+        .y_mm = input.x_mm * s + input.y_mm * c,
+        .z_mm = input.z_mm,
+    };
 }
 
 static float lerpf(float a, float b, float t)
@@ -93,6 +136,29 @@ static vec3f_t lerp_vec3(vec3f_t a, vec3f_t b, float t)
         .x_mm = lerpf(a.x_mm, b.x_mm, t),
         .y_mm = lerpf(a.y_mm, b.y_mm, t),
         .z_mm = lerpf(a.z_mm, b.z_mm, t),
+    };
+}
+
+static vec3f_t body_foot_to_world(scargo_leg_id_t leg, vec3f_t foot_body, float stand_height_mm, const body_pose_t *pose)
+{
+    const scargo_mechanics_t *mech = board_defaults_mechanics();
+    const float half_width = mech->body_width_mm * 0.5f;
+    const float half_length = mech->body_length_mm * 0.5f;
+    const vec3f_t hip_offsets[SCARGO_LEG_COUNT] = {
+        [SCARGO_LEG_FRONT_RIGHT] = {.x_mm = -half_width, .y_mm = half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_FRONT_LEFT] = {.x_mm = half_width, .y_mm = half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_RIGHT] = {.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_LEFT] = {.x_mm = half_width, .y_mm = -half_length, .z_mm = 0.0f},
+    };
+
+    vec3f_t relative = rotate_x_local(foot_body, deg2rad_local(pose->roll_deg));
+    relative = rotate_y_local(relative, deg2rad_local(pose->pitch_deg));
+    relative = rotate_z_local(relative, deg2rad_local(pose->yaw_deg));
+
+    return (vec3f_t){
+        .x_mm = relative.x_mm + hip_offsets[leg].x_mm,
+        .y_mm = relative.y_mm + hip_offsets[leg].y_mm,
+        .z_mm = relative.z_mm + stand_height_mm + hip_offsets[leg].z_mm,
     };
 }
 
@@ -142,27 +208,99 @@ static float move_towards(float current, float target, float max_delta)
     return target;
 }
 
-static float map_centered_height(float input,
-                                 float min_height_mm,
-                                 float default_height_mm,
-                                 float max_height_mm)
+static void begin_calibration_mid_pose_transition(void)
 {
-    float clamped = clampf_local(input, -1.0f, 1.0f);
-    if (clamped >= 0.0f) {
-        return lerpf(default_height_mm, max_height_mm, clamped);
+    const float speed_deg_s = body_angle_speed_deg_s(s_motion_speed);
+    float max_delta_deg = 0.0f;
+
+    s_calibration_mode_active = true;
+    s_calibration_progress_s = 0.0f;
+    copy_feet(s_calibration_preview_start_feet_world, s_current_feet_world);
+    s_calibration_preview_pose = (body_pose_t){0};
+    s_calibration_preview_height_mm = s_current_height_mm;
+
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
+            s_calibration_start_angles[leg][joint] = s_target_angles[leg][joint];
+            s_calibration_target_angles[leg][joint] = 90.0f;
+            float delta_deg = fabsf(s_calibration_target_angles[leg][joint] - s_calibration_start_angles[leg][joint]);
+            if (delta_deg > max_delta_deg) {
+                max_delta_deg = delta_deg;
+            }
+        }
     }
-    return lerpf(default_height_mm, min_height_mm, -clamped);
+
+    /*
+     * 标定预览目标不从“90/90/90 舵机角”反推，
+     * 而是直接使用我们定义的中位几何姿态：
+     * - shoulder = 0
+     * - alpha    = 0   (大腿垂直向下)
+     * - beta     = 90  (小腿相对大腿垂直向前)
+     *
+     * 这样 OLED 看到的是用户定义的安装中位语义，而不是执行层安装约束后的反推结果。
+     */
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        leg_joint_pose_t mid_joint_pose = {
+            .shoulder_deg = 0.0f,
+            .thigh_deg = 0.0f,
+            .beta_deg = 90.0f,
+        };
+        vec3f_t chain_points[4];
+        if (!kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
+            s_calibration_preview_target_feet_world[leg] = s_current_feet_world[leg];
+            continue;
+        }
+        s_calibration_preview_target_feet_world[leg] =
+            body_foot_to_world((scargo_leg_id_t)leg, chain_points[3], s_calibration_preview_height_mm, &s_calibration_preview_pose);
+    }
+
+    s_calibration_duration_s = clampf_local(max_delta_deg / fmaxf(speed_deg_s, 1.0f), 0.20f, 1.20f);
 }
 
-static float gait_cycle_from_sb(int16_t aux_sb)
+static bool update_calibration_transition(float dt_s)
 {
-    if (aux_sb < 0) {
-        return SCARGO_WALK_CYCLE_FAST_MS;
+    if (!s_calibration_mode_active) {
+        return false;
     }
-    if (aux_sb > 0) {
-        return SCARGO_WALK_CYCLE_SLOW_MS;
+
+    s_calibration_progress_s += dt_s;
+    float progress = s_calibration_progress_s / fmaxf(s_calibration_duration_s, 0.01f);
+    float eased = smoothstepf(progress);
+
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
+            s_target_angles[leg][joint] = lerpf(
+                s_calibration_start_angles[leg][joint],
+                s_calibration_target_angles[leg][joint],
+                eased);
+        }
+        s_current_feet_world[leg] = lerp_vec3(
+            s_calibration_preview_start_feet_world[leg],
+            s_calibration_preview_target_feet_world[leg],
+            eased);
     }
-    return SCARGO_WALK_CYCLE_MEDIUM_MS;
+
+    s_current_body_pose = s_calibration_preview_pose;
+    s_current_height_mm = s_calibration_preview_height_mm;
+    servo_output_set_group_angles_deg(s_target_angles);
+    return true;
+}
+
+static float gait_cycle_effective_ms(const rc_command_t *command)
+{
+    // 启动时 aux_sb 默认是 0，此时自然落到 Web 配置的中档值。
+    // 遥控连上后，SB 负责在 min/mid/max 三档中切换。
+    // 遥控临时断开时，不立即回退到配置，而是保持最后一次收到的档位。
+    if (command == NULL) {
+        return s_config.gait.step_cycle_ms;
+    }
+    if (command->aux_sb < 0) {
+        return s_config.gait.step_cycle_min_ms;
+    }
+    if (command->aux_sb > 0) {
+        return s_config.gait.step_cycle_max_ms;
+    }
+    return s_config.gait.step_cycle_ms;
 }
 
 static float stand_height_from_sb(int16_t aux_sb)
@@ -173,12 +311,19 @@ static float stand_height_from_sb(int16_t aux_sb)
     return s_config.gait.stand_height_default_mm;
 }
 
-static float gait_step_height_from_sc(int16_t aux_sc)
+static float gait_step_height_effective_mm(const rc_command_t *command)
 {
-    if (aux_sc < 0) {
+    // 与周期逻辑相同：
+    // - 未连接前，默认使用 Web 当前值
+    // - 连接后，由 SC 三档覆盖
+    // - 断链后，保持最后一次收到的档位，不自动跳回 Web 值
+    if (command == NULL) {
+        return s_config.gait.step_height_mm;
+    }
+    if (command->aux_sc < 0) {
         return s_config.gait.step_height_min_mm;
     }
-    if (aux_sc > 0) {
+    if (command->aux_sc > 0) {
         return s_config.gait.step_height_max_mm;
     }
     return s_config.gait.step_height_mm;
@@ -204,6 +349,16 @@ static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LE
     }
 }
 
+// 开始一次“姿态/高度/脚点”的统一平滑过渡。
+//
+// 这是当前项目里所有模式切换的总入口：
+// - stand -> lie
+// - lie -> stand
+// - walk -> stand
+// - 进入标定安装位
+//
+// 这样做的原因是：任何模式切换都不允许瞬时跳变，而是必须在每个控制周期里
+// 重新计算一个中间时刻的目标足端和机身姿态，保证机械动作连续。
 static void begin_posture_transition(robot_posture_t posture, float target_height_mm,
                                      const vec3f_t target_feet_world[SCARGO_LEG_COUNT],
                                      const body_pose_t *target_pose, float lift_mm)
@@ -230,51 +385,6 @@ static void begin_posture_transition(robot_posture_t posture, float target_heigh
     }
 
     s_transition_duration_s = clampf_local(max_distance_mm / fmaxf(speed_mm_s, 1.0f), 0.35f, 1.80f);
-}
-
-static void begin_calibration_mid_pose_transition(void)
-{
-    const float speed_deg_s = body_angle_speed_deg_s(s_motion_speed);
-    float max_delta_deg = 0.0f;
-
-    s_calibration_mode_active = true;
-    s_calibration_progress_s = 0.0f;
-
-    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
-            s_calibration_start_angles[leg][joint] = s_target_angles[leg][joint];
-            s_calibration_target_angles[leg][joint] = 90.0f;
-            float delta_deg = fabsf(s_calibration_target_angles[leg][joint] - s_calibration_start_angles[leg][joint]);
-            if (delta_deg > max_delta_deg) {
-                max_delta_deg = delta_deg;
-            }
-        }
-    }
-
-    s_calibration_duration_s = clampf_local(max_delta_deg / fmaxf(speed_deg_s, 1.0f), 0.20f, 1.20f);
-}
-
-static bool update_calibration_transition(float dt_s)
-{
-    if (!s_calibration_mode_active) {
-        return false;
-    }
-
-    s_calibration_progress_s += dt_s;
-    float progress = s_calibration_progress_s / fmaxf(s_calibration_duration_s, 0.01f);
-    float eased = smoothstepf(progress);
-
-    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
-            s_target_angles[leg][joint] = lerpf(
-                s_calibration_start_angles[leg][joint],
-                s_calibration_target_angles[leg][joint],
-                eased);
-        }
-    }
-
-    servo_output_set_group_angles_deg(s_target_angles);
-    return true;
 }
 
 static void update_transition(float dt_s)
@@ -306,6 +416,11 @@ static void update_transition(float dt_s)
     }
 }
 
+// 遥控输入 -> 机身目标姿态。
+//
+// 注意这里分了 stand / walk 两种语义：
+// - stand : 摇杆主要控制机身姿态和站高
+// - walk  : 摇杆主要控制步态方向和步长，不直接在这里给姿态角
 static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_mode_t mode)
 {
     robot_target_pose_t target = {
@@ -350,14 +465,14 @@ static void fill_mid_pose(float target[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG])
 static void log_mid_pose_forward_kinematics(void)
 {
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        leg_servo_pose_t mid = {
-            .shoulder_deg = 90.0f,
-            .thigh_servo_deg = 90.0f,
-            .calf_servo_deg = 90.0f,
-            .knee_deg = 0.0f,
+        leg_joint_pose_t mid_joint_pose = {
+            .shoulder_deg = 0.0f,
+            .thigh_deg = 0.0f,
+            .beta_deg = 90.0f,
         };
-        vec3f_t foot_body;
-        if (kinematics_forward_leg((scargo_leg_id_t)leg, &mid, &foot_body)) {
+        vec3f_t chain_points[4];
+        if (kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
+            vec3f_t foot_body = chain_points[3];
             ESP_LOGI(TAG,
                      "mid FK leg=%d foot_body=(x=%.1f,y=%.1f,z=%.1f)",
                      leg,
@@ -368,14 +483,32 @@ static void log_mid_pose_forward_kinematics(void)
     }
 }
 
+/*
+ * 把“世界坐标中的目标脚点 + 机身高度/姿态”真正解成 12 路舵机角。
+ *
+ * 这是控制层进入三层结构的总入口：
+ *
+ *   足端目标（世界坐标）
+ *   -> feet_body（机身局部）
+ *   -> 纯几何逆解（shoulder / alpha / beta）
+ *   -> 执行映射（joint_to_servo）
+ *   -> s_target_angles
+ *   -> servo_output
+ *
+ * 因此：
+ * - 这里是“几何层 -> 执行层”的边界
+ * - 显示层不应该倒着从这里反推几何语义
+ */
 static void solve_and_apply_feet(const vec3f_t feet_world[SCARGO_LEG_COUNT], float height_mm, const body_pose_t *pose)
 {
     vec3f_t feet_body[SCARGO_LEG_COUNT];
     kinematics_apply_body_pose(feet_body, feet_world, height_mm, pose);
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        leg_joint_pose_t joint_pose;
         leg_servo_pose_t pose_solution;
-        if (!kinematics_solve_leg((scargo_leg_id_t)leg, &feet_body[leg], &pose_solution)) {
+        if (!kinematics_solve_leg_geometry((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
+            !kinematics_joint_to_servo((scargo_leg_id_t)leg, &joint_pose, &pose_solution)) {
             continue;
         }
         s_target_angles[leg][SCARGO_JOINT_SHOULDER] = pose_solution.shoulder_deg;
@@ -411,6 +544,15 @@ static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
     s_prev_pitch_error = pitch_error;
 }
 
+// 站立模式控制。
+//
+// 站立模式的核心约束是：
+// - 四个足端相对地面固定
+// - 机身高度、姿态、平移由遥控输入缓慢逼近目标
+//
+// 当前实现里：
+// - SB 中/高段：站高 + 机身姿态
+// - SB 低段    ：站高 + 机身在 x/y 平面平移
 static void apply_stand_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
@@ -461,11 +603,23 @@ static void apply_lie_hold_pose(void)
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &s_current_body_pose);
 }
 
+// 摆线方程的相位函数。
+// 用来生成摆动相时较平滑的足端轨迹。
 static float cycloid_phase(float phase)
 {
     return phase - sinf(2.0f * (float)M_PI * phase) / (2.0f * (float)M_PI);
 }
 
+// 按某一时刻的步态相位，生成四条腿的目标足端。
+//
+// 当前 walk 模式的语义：
+// - 支撑相：足端在 x/y 平面内做直线移动
+// - 摆动相：足端在 x/y 方向随相位推进，同时 z 方向按摆线抬脚
+//
+// 遥控映射：
+// - pitch : y 方向步长
+// - roll  : x 方向步长
+// - yaw   : 左右两侧在 y 上做差分，用于转向
 static void apply_walk_feet_for_phase(const rc_command_t *command, const attitude_state_t *attitude,
                                       float phase, float stride, float stand_height, float step_height, body_pose_t *pose,
                                       vec3f_t feet_world[SCARGO_LEG_COUNT])
@@ -503,14 +657,20 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
     apply_balance(pose, attitude);
 }
 
+// 行走模式控制。
+//
+// 目前分成 3 段：
+// 1. WALK_START  : 起步过渡
+// 2. WALK_STEADY : 稳态周期行走
+// 3. WALK_STOP   : 预留给优雅收步，当前主要通过切回统一姿态过渡实现
 static void apply_walk_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     static uint32_t steady_tick;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
     float throttle_ratio = walk_step_scale_from_throttle(command);
-    float step_height = gait_step_height_from_sc(command->aux_sc);
+    float step_height = gait_step_height_effective_mm(command);
     float stride = throttle_ratio * step_height * s_config.gait.step_scale;
-    float cycle = fmaxf(gait_cycle_from_sb(command->aux_sb) / 1000.0f, 0.15f);
+    float cycle = fmaxf(gait_cycle_effective_ms(command) / 1000.0f, 0.15f);
     robot_target_pose_t target = make_target_pose(command, ROBOT_MODE_WALK);
     float stand_height = s_transition_active ? s_current_height_mm : target.height_mm;
     body_pose_t pose = {
@@ -568,16 +728,19 @@ void robot_control_init(const system_config_t *config)
     s_current_height_mm = SCARGO_LIE_HEIGHT_MM;
     s_current_body_pose = (body_pose_t){0};
     s_posture = ROBOT_POSTURE_LIE;
+    s_servo_enabled = false;
+    s_last_aux_sa = 0;
+    s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
     servo_output_init(&config->calibration);
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &s_current_body_pose);
-    servo_output_set_group_angles_deg(s_target_angles);
     log_mid_pose_forward_kinematics();
     ESP_LOGI(TAG, "Robot control initialized");
 }
 
 void robot_control_apply_mid_pose(void)
 {
+    s_servo_enabled = true;
     begin_calibration_mid_pose_transition();
     ESP_LOGI(TAG, "Started smooth transition to calibrated mid-pose");
 }
@@ -633,6 +796,25 @@ bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JO
     return true;
 }
 
+bool robot_control_get_current_feet_world(vec3f_t out_feet_world[SCARGO_LEG_COUNT])
+{
+    if (out_feet_world == NULL) {
+        return false;
+    }
+    copy_feet(out_feet_world, s_current_feet_world);
+    return true;
+}
+
+body_pose_t robot_control_get_current_body_pose(void)
+{
+    return s_current_body_pose;
+}
+
+float robot_control_get_current_height_mm(void)
+{
+    return s_current_height_mm;
+}
+
 robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
 {
     bool walk_mode = command->walk_mode || s_mode == ROBOT_MODE_WALK;
@@ -658,6 +840,30 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     static uint32_t tick_counter = 0;
     ++tick_counter;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
+    const bool sa_toggled = command->aux_sa != s_last_aux_sa;
+    const bool sa_toggled_to_stand = sa_toggled && !command->walk_mode;
+
+    if (!s_servo_enabled) {
+        /*
+         * 上电后默认不驱动舵机。
+         * 只有以下显式动作才允许启动：
+         * 1. 用户通过遥控切换 SA 且到达 stand，明确进入站立模式
+         * 2. Web 标定页调用 robot_control_apply_mid_pose()（在那里单独置位）
+         *
+         * 如果遥控器在开机时本来就停在某个站立/行走档位，不自动启动舵机。
+         * 并且首次激活不允许直接进入 walk，也不允许通过遥控直接进入 calibration。
+         * 首次通过遥控启动，只能进入 stand；
+         * 首次通过 Web 启动，才能进入 calibration/mid pose。
+         */
+        if (sa_toggled_to_stand) {
+            s_servo_enabled = true;
+        } else {
+            s_last_aux_sa = command->aux_sa;
+            s_last_aux_sd = command->aux_sd;
+            return;
+        }
+    }
+
     update_transition(dt_s);
 
     if (s_calibration_mode_active && command->aux_sd <= 0 && s_last_aux_sd > 0) {
@@ -676,6 +882,8 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         if ((tick_counter % 100U) == 0U) {
             ESP_LOGI(TAG, "calibration mode active");
         }
+        s_last_aux_sa = command->aux_sa;
+        s_last_aux_sd = command->aux_sd;
         return;
     }
 
@@ -821,5 +1029,6 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
                  attitude->yaw_deg);
     }
 
+    s_last_aux_sa = command->aux_sa;
     s_last_aux_sd = command->aux_sd;
 }

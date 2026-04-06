@@ -119,8 +119,10 @@ typedef struct {
 
 typedef struct {
     int8_t shoulder_sign;
-    int8_t knee_coupling_sign;
-    float knee_coupling_offset_deg;
+    // beta_sign / beta_offset_deg 用来统一描述“小腿相对大腿的大夹角 beta”
+    // 与舵机角之间的镜像和安装偏置关系。
+    int8_t beta_sign;
+    float beta_offset_deg;
 } scargo_leg_kinematics_binding_t;
 
 const scargo_gpio_map_t *board_defaults_gpio_map(void);

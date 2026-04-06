@@ -5,10 +5,16 @@
 #include "board_defaults.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "rc_input";
 static rc_command_t s_command;
 static bool s_uart_ready;
+static int64_t s_last_frame_us;
+
+enum {
+    SCARGO_RC_LINK_TIMEOUT_US = 500000,
+};
 
 enum {
     CRSF_FRAME_MAX = 64,
@@ -93,6 +99,7 @@ static void update_command_from_channels(const uint16_t *channels, size_t count)
     s_command.aux_sd = decode_switch(channels[7]);
     s_command.walk_mode = s_command.aux_sa > 0;
     s_command.link_up = true;
+    s_last_frame_us = esp_timer_get_time();
 }
 
 static void decode_channels_payload(const uint8_t *payload, size_t payload_len)
@@ -155,6 +162,7 @@ static void consume_uart_bytes(const uint8_t *buffer, int length)
 void rc_input_init(void)
 {
     memset(&s_command, 0, sizeof(s_command));
+    s_last_frame_us = 0;
 
     const scargo_gpio_map_t *pins = board_defaults_gpio_map();
     uart_config_t uart_config = {
@@ -184,6 +192,15 @@ void rc_input_tick(void)
     int length = uart_read_bytes(UART_NUM_1, buffer, sizeof(buffer), 0);
     if (length > 0) {
         consume_uart_bytes(buffer, length);
+    }
+
+    // CRSF 是持续刷新的协议。如果在一段时间内收不到新帧，就认为遥控已经失联。
+    // 这样当遥控关闭或断开后，运行时档位覆盖会自动失效，Web/默认配置值才能重新直接生效。
+    if (s_command.link_up && s_last_frame_us > 0) {
+        int64_t now_us = esp_timer_get_time();
+        if ((now_us - s_last_frame_us) > SCARGO_RC_LINK_TIMEOUT_US) {
+            s_command.link_up = false;
+        }
     }
 }
 
