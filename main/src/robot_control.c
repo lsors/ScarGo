@@ -246,7 +246,7 @@ static void begin_calibration_mid_pose_transition(void)
             .beta_deg = 90.0f,
         };
         vec3f_t chain_points[4];
-        if (!kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
+        if (!kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
             s_calibration_preview_target_feet_world[leg] = s_current_feet_world[leg];
             continue;
         }
@@ -471,7 +471,7 @@ static void log_mid_pose_forward_kinematics(void)
             .beta_deg = 90.0f,
         };
         vec3f_t chain_points[4];
-        if (kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
+        if (kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)leg, &mid_joint_pose, chain_points)) {
             vec3f_t foot_body = chain_points[3];
             ESP_LOGI(TAG,
                      "mid FK leg=%d foot_body=(x=%.1f,y=%.1f,z=%.1f)",

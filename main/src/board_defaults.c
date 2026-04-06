@@ -34,7 +34,7 @@ static const scargo_servo_binding_t SERVO_MAP[SCARGO_LEG_COUNT][SCARGO_JOINTS_PE
     {{10, 1}, {9, 1}, {8, 1}},      //3  左后 ok
 };
 
-static const scargo_leg_kinematics_binding_t LEG_KINEMATICS[SCARGO_LEG_COUNT] = {
+static const scargo_leg_installation_binding_t LEG_INSTALLATION[SCARGO_LEG_COUNT] = {
     [SCARGO_LEG_FRONT_RIGHT] = {.shoulder_sign = -1, .beta_sign = -1, .beta_offset_deg = 90.0f},
     [SCARGO_LEG_FRONT_LEFT] = {.shoulder_sign = 1, .beta_sign = 1, .beta_offset_deg = -90.0f},
     [SCARGO_LEG_REAR_RIGHT] = {.shoulder_sign = -1, .beta_sign = -1, .beta_offset_deg = 90.0f},
@@ -58,9 +58,9 @@ const scargo_servo_binding_t (*board_defaults_servo_map(void))[SCARGO_JOINTS_PER
     return SERVO_MAP;
 }
 
-const scargo_leg_kinematics_binding_t *board_defaults_leg_kinematics(void)
+const scargo_leg_installation_binding_t *board_defaults_leg_installation(void)
 {
-    return LEG_KINEMATICS;
+    return LEG_INSTALLATION;
 }
 
 scargo_buzzer_mode_t board_defaults_buzzer_mode(void)

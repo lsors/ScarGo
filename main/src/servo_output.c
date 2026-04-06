@@ -37,7 +37,7 @@ static calibration_config_t s_calibration;
  */
 static float derive_beta_deg(int leg, float thigh_base_angle_deg, float calf_base_angle_deg)
 {
-    const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
+    const scargo_leg_installation_binding_t *leg_bindings = board_defaults_leg_installation();
     return (float)leg_bindings[leg].beta_sign *
            (calf_base_angle_deg - thigh_base_angle_deg - leg_bindings[leg].beta_offset_deg);
 }

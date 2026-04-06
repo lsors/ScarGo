@@ -613,27 +613,27 @@ static void render_leg_preview_page(void)
      * 第三层：预览显示层
      * ====================
      *
-     * 单腿实时页只做“纯几何预览”：
+     * 单腿实时页只做“安装层预览”：
      * 1. 先从控制层读取当前足端世界坐标与机身姿态
      * 2. 转回机身局部 feet_body
-     * 3. 用 preview_geometry 解出 shoulder / alpha / beta
-     * 4. 再把几何链点画出来
+     * 3. 用 installation_pose 解出 shoulder / alpha / beta
+     * 4. 再把安装层链点画出来
      *
      * 这里刻意不走：
      * - SERVO_MAP
      * - 标定偏置
      * - 小腿真实执行修正
      *
-     * 因为这个页面要表达的是“当前控制目标在几何上长什么样”，
+     * 因为这个页面要表达的是“当前控制目标在安装语义下长什么样”，
      * 而不是“PCA9685 最终打给舵机的电角度”。
      */
     body_pose_t pose = robot_control_get_current_body_pose();
     kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
-    if (!kinematics_solve_leg_preview_geometry((scargo_leg_id_t)s_leg_preview_selection,
-                                               &feet_body[s_leg_preview_selection],
-                                               &joint_pose) ||
-        !kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)s_leg_preview_selection, &joint_pose,
-                                                         chain_points)) {
+    if (!kinematics_solve_leg_installation_pose((scargo_leg_id_t)s_leg_preview_selection,
+                                                &feet_body[s_leg_preview_selection],
+                                                &joint_pose) ||
+        !kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)s_leg_preview_selection, &joint_pose,
+                                                             chain_points)) {
         oled_draw_text(18, 3, "LEG PREVIEW");
         oled_draw_text(26, 5, "NO DATA");
         return;
@@ -724,13 +724,13 @@ static bool compute_leg_model_points(int leg, float points[4][3])
         return false;
     }
     /*
-     * 整机实时页与单腿实时页必须使用同一条“纯几何预览链”。
-     * 这里不允许额外混入任何执行层补偿，否则单腿页和整机页就会分叉。
+     * 整机实时页与单腿实时页必须使用同一条“安装层预览链”。
+     * 这里不允许额外混入任何舵机层补偿，否则单腿页和整机页就会分叉。
      */
     body_pose_t pose = robot_control_get_current_body_pose();
     kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
-    if (!kinematics_solve_leg_preview_geometry((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
-        !kinematics_compute_leg_preview_chain_from_joint((scargo_leg_id_t)leg, &joint_pose, chain_points)) {
+    if (!kinematics_solve_leg_installation_pose((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
+        !kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)leg, &joint_pose, chain_points)) {
         return false;
     }
     const float half_width = mech->body_width_mm * 0.5f;

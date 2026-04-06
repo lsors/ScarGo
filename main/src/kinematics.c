@@ -3,25 +3,25 @@
 #include <math.h>
 
 /*
- * 本文件同时承载两套“运动学相关”函数，但语义必须分清：
+ * 本文件当前承载四层中的前三层：
  *
- * 1. 几何本质层
+ * 1. 纯几何层
  *    - kinematics_solve_leg_geometry()
  *    - kinematics_compute_leg_chain_from_joint()
- *    - kinematics_solve_leg_preview_geometry()
- *    - kinematics_compute_leg_preview_chain_from_joint()
  *
- * 2. 几何 -> 执行映射层
+ * 2. 安装层
+ *    - kinematics_solve_leg_installation_pose()
+ *    - kinematics_compute_leg_chain_from_installation_pose()
+ *
+ * 3. 舵机层前的映射辅助
  *    - kinematics_servo_to_joint()
  *    - kinematics_joint_to_servo()
  *    - kinematics_solve_leg()
  *    - kinematics_forward_leg()
  *    - kinematics_compute_leg_chain()
  *
- * 设计原则：
- * - preview_* 系列只服务于显示
- * - servo_* / joint_to_servo 系列服务于真实执行
- * - 两层都建立在同一个 alpha / beta 语义之上
+ * display_service 不应该自己再维护一套几何公式；
+ * 它只应通过安装层接口来拿腿形。
  */
 
 static float deg2rad(float deg)
@@ -148,21 +148,21 @@ void kinematics_apply_body_pose(vec3f_t feet_body[SCARGO_LEG_COUNT], const vec3f
     }
 }
 
-// 舵机角 -> 机械关节角。
+// 舵机角 -> 安装层关节角。
 //
-// 这里是整个项目最重要的“语义翻译层”之一：
-// - shoulder_deg : 处理肩膀镜像安装后的真实关节角
-// - thigh_deg    : 大腿为直驱，直接以 90 度中位翻译
-// - beta_deg     : 大腿与小腿之间的大夹角 beta
+// 这里是“舵机层”回到“安装层”的语义翻译：
+// - shoulder_deg : 当前安装方式下的肩膀关节角
+// - thigh_deg    : 当前安装方式下的大腿关节角
+// - beta_deg     : 当前安装方式下的大夹角 beta
 //
 // 统一后的换算关系是：
 //   beta = beta_sign * (calf_servo - thigh_servo - beta_offset)
 //
-// 这样四条腿就共用同一套 alpha/beta 语言体系，
-// 具体镜像差异只通过 board_defaults 里的符号和偏置表来区分。
+// 四条腿共用同一套 alpha/beta 语言体系，
+// 具体差异只通过安装层参数表来区分。
 bool kinematics_servo_to_joint(scargo_leg_id_t leg, const leg_servo_pose_t *servo_pose, leg_joint_pose_t *joint_pose)
 {
-    const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
+    const scargo_leg_installation_binding_t *leg_bindings = board_defaults_leg_installation();
     if (servo_pose == NULL || joint_pose == NULL) {
         return false;
     }
@@ -175,11 +175,11 @@ bool kinematics_servo_to_joint(scargo_leg_id_t leg, const leg_servo_pose_t *serv
     return true;
 }
 
-// 机械关节角 -> 舵机角。
+// 安装层关节角 -> 舵机角。
 // 和 kinematics_servo_to_joint() 正好相反，逆解完成后最终会走这里。
 bool kinematics_joint_to_servo(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose, leg_servo_pose_t *servo_pose)
 {
-    const scargo_leg_kinematics_binding_t *leg_bindings = board_defaults_leg_kinematics();
+    const scargo_leg_installation_binding_t *leg_bindings = board_defaults_leg_installation();
     if (joint_pose == NULL || servo_pose == NULL) {
         return false;
     }
@@ -347,7 +347,7 @@ bool kinematics_compute_leg_chain(scargo_leg_id_t leg, const leg_servo_pose_t *p
     return kinematics_compute_leg_chain_from_joint(leg, &joint_pose, out_points);
 }
 
-bool kinematics_solve_leg_preview_geometry(scargo_leg_id_t leg, const vec3f_t *foot_body, leg_joint_pose_t *out_pose)
+bool kinematics_solve_leg_installation_pose(scargo_leg_id_t leg, const vec3f_t *foot_body, leg_joint_pose_t *out_pose)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     if (out_pose == NULL || foot_body == NULL) {
@@ -373,10 +373,10 @@ bool kinematics_solve_leg_preview_geometry(scargo_leg_id_t leg, const vec3f_t *f
     }
 
     /*
-     * 预览层采用“大夹角 beta”语义。
-     * 这是 OLED/整机预览当前已验证正确的几何解释：
+     * 安装层采用“大夹角 beta”语义。
+     * 这是 OLED/整机预览当前已验证正确的安装解释：
      * - beta 表示大腿延长线和小腿之间的夹角
-     * - 它与执行层里的 beta 语义不完全等同，因此不能直接复用主逆解结果
+     * - 它与真实舵机层里的 beta 语义不完全等同，因此不能直接复用主逆解结果
      */
     const float beta_cos =
         clampf((mech->thigh_length_mm * mech->thigh_length_mm +
@@ -397,8 +397,8 @@ bool kinematics_solve_leg_preview_geometry(scargo_leg_id_t leg, const vec3f_t *f
     return true;
 }
 
-bool kinematics_compute_leg_preview_chain_from_joint(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose,
-                                                     vec3f_t out_points[4])
+bool kinematics_compute_leg_chain_from_installation_pose(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose,
+                                                         vec3f_t out_points[4])
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     if (joint_pose == NULL || out_points == NULL) {
@@ -406,12 +406,12 @@ bool kinematics_compute_leg_preview_chain_from_joint(scargo_leg_id_t leg, const 
     }
 
     /*
-     * 预览链点保留 OLED 已验证正确的几何构造：
+     * 安装层链点保留 OLED 已验证正确的几何构造：
      * - alpha 控制大腿段
      * - beta 为大夹角
      * - 小腿方向按 alpha + PI - beta 构造
      *
-     * 这里故意不复用执行层那套链点，因为执行层当前还带有真实机械修正语义。
+     * 这里故意不复用舵机层那套链点，因为舵机层当前还带有真实机械修正语义。
      */
     const float shoulder = deg2rad(-joint_pose->shoulder_deg);
     const float alpha = deg2rad(joint_pose->thigh_deg);

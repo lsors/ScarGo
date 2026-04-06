@@ -5,31 +5,37 @@
 #include "board_defaults.h"
 
 /*
- * ScarGo 运动学三层约定
+ * ScarGo 运动学四层约定
  * ====================
  *
  * 1. 纯几何层（Geometry Layer）
- *    - 只讨论单腿几何关系
+ *    - 只讨论理想单腿几何关系
  *    - 输入：足端坐标、机身姿态、连杆长度
  *    - 输出：shoulder / alpha / beta
- *    - 不包含：SERVO_MAP、标定偏置、舵机镜像、PCA9685 通道
+ *    - 不包含：安装零位、镜像、SERVO_MAP、标定偏置、PCA9685 通道
  *
- * 2. 真实执行映射层（Mechanical / Servo Layer）
- *    - 把几何关节角翻译成真实舵机角
+ * 2. 安装层（Installation Layer）
+ *    - 把纯几何层结果翻译成“当前这套机械安装语义”
+ *    - 这一层服务于：
+ *      - OLED / Web 预览
+ *      - 真实舵机层前的安装解释
+ *    - 这里不进入真实舵机电角度细节
+ *
+ * 3. 舵机层（Servo Layer）
+ *    - 在安装层之上，进一步处理真实执行映射
  *    - 这里才允许出现：
- *      - 安装中位 90 度
- *      - 左右/前后镜像
- *      - beta_sign / beta_offset
+ *      - SERVO_MAP / servo_sign
  *      - 标定偏置
- *      - 真实小腿执行修正
+ *      - 小腿联动修正
+ *      - PCA9685 输出
  *
- * 3. 预览显示层（Preview / Display Layer）
- *    - OLED / Web 预览只应使用“纯几何层”的结果来画图
- *    - 不能把执行层的 sign / offset / calibration 带进显示语义
+ * 4. 显示层（Display Layer）
+ *    - 只读安装层结果来做可视化
+ *    - 不应再引入舵机层的 sign / offset / calibration
  *
- * 当前头文件里的类型也按这个分层来理解：
- * - leg_joint_pose_t : 纯几何层关节量
- * - leg_servo_pose_t : 执行层舵机量
+ * 当前头文件里的类型按这个分层来理解：
+ * - leg_joint_pose_t : 纯几何层或安装层使用的关节量容器
+ * - leg_servo_pose_t : 舵机层使用的舵机角容器
  */
 
 typedef struct {
@@ -124,24 +130,20 @@ bool kinematics_compute_leg_chain(scargo_leg_id_t leg, const leg_servo_pose_t *p
 bool kinematics_compute_leg_chain_from_joint(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose, vec3f_t out_points[4]);
 
 /*
- * 纯几何预览接口
- * ---------------
+ * 安装层接口
+ * ----------
  *
- * 这组接口只给 OLED / Web 预览使用。
+ * 这组接口给 OLED / Web 预览，以及后续“安装语义”分析使用。
  *
- * 设计原则：
- * - 预览必须表达“几何本质层”
- * - 预览不能混入执行层的 sign / offset / calibration
- * - 预览看到的腿形，应该回答：
- *     “从当前足端目标反推，几何上这条腿应该是什么姿态”
+ * 它们回答的问题不是：
+ *   “理想数学模型的腿长什么样”
  *
- * 因此这里：
- * - 不考虑舵机安装镜像
- * - 不考虑执行层偏置
- * - 只按单腿几何本质求 shoulder / alpha / beta
+ * 而是：
+ *   “在 ScarGo 当前安装定义下，这条腿应该长什么样”
+ *
+ * 因此：
+ * - 不直接进入真实舵机电角度
+ * - 但也不等同于最原始的纯几何层
  */
-bool kinematics_solve_leg_preview_geometry(scargo_leg_id_t leg, const vec3f_t *foot_body, leg_joint_pose_t *out_joint_pose);
-
-// 纯几何预览链点。
-// 输入 shoulder / alpha / beta，直接生成肩膀末端、膝点、足端几何链。
-bool kinematics_compute_leg_preview_chain_from_joint(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose, vec3f_t out_points[4]);
+bool kinematics_solve_leg_installation_pose(scargo_leg_id_t leg, const vec3f_t *foot_body, leg_joint_pose_t *out_joint_pose);
+bool kinematics_compute_leg_chain_from_installation_pose(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose, vec3f_t out_points[4]);

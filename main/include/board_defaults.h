@@ -119,14 +119,20 @@ typedef struct {
 
 typedef struct {
     int8_t shoulder_sign;
-    // beta_sign / beta_offset_deg 用来统一描述“小腿相对大腿的大夹角 beta”
-    // 与舵机角之间的镜像和安装偏置关系。
+    /*
+     * 安装层参数：
+     * - shoulder_sign   : 肩膀在当前安装方式下的方向解释
+     * - beta_sign/offset: beta 大夹角在当前安装方式下的方向和零位偏置
+     *
+     * 这组数据属于“安装层”，不是最终舵机层。
+     * 舵机层还会在此基础上继续叠加 servo_sign、标定偏置和真实执行修正。
+     */
     int8_t beta_sign;
     float beta_offset_deg;
-} scargo_leg_kinematics_binding_t;
+} scargo_leg_installation_binding_t;
 
 const scargo_gpio_map_t *board_defaults_gpio_map(void);
 const scargo_mechanics_t *board_defaults_mechanics(void);
 const scargo_servo_binding_t (*board_defaults_servo_map(void))[SCARGO_JOINTS_PER_LEG];
-const scargo_leg_kinematics_binding_t *board_defaults_leg_kinematics(void);
+const scargo_leg_installation_binding_t *board_defaults_leg_installation(void);
 scargo_buzzer_mode_t board_defaults_buzzer_mode(void);
