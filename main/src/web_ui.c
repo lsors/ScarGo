@@ -291,7 +291,13 @@ static esp_err_t calibration_post_handler(httpd_req_t *req)
     cJSON_Delete(root);
     config_store_validate(s_config);
     robot_control_update_calibration(&s_config->calibration);
-    robot_control_apply_mid_pose();
+    /*
+     * 保存标定值时，如果当前已经在标定模式，就不要再次触发“进入标定”的过渡，
+     * 否则每次 +/- 都会重新走一遍中位插值，表现成先跳一下再落到正确位置。
+     */
+    if (!robot_control_is_calibration_mode_active()) {
+        robot_control_apply_mid_pose();
+    }
     if (!storage_service_save_calibration(&s_config->calibration)) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save calibration");
     }
@@ -337,7 +343,14 @@ static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
 
     cJSON_Delete(root);
     robot_control_update_calibration(&preview);
-    robot_control_apply_mid_pose();
+    /*
+     * 预览偏置调整时同样遵循：
+     * - 已在标定模式：只刷新偏置，不重复进入中位
+     * - 未在标定模式：首次进入中位
+     */
+    if (!robot_control_is_calibration_mode_active()) {
+        robot_control_apply_mid_pose();
+    }
     return send_json(req, "{\"status\":\"preview\"}");
 }
 

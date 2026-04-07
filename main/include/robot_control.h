@@ -68,6 +68,12 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command);
 void robot_control_set_motion_speed(robot_motion_speed_t speed);
 robot_motion_speed_t robot_control_get_motion_speed(void);
 void robot_control_cancel_calibration_mode(void);
+// 查询当前是否正处于标定模式。
+//
+// Web 标定页需要用这个状态区分两种情况：
+// 1. 还没进入标定模式：更新偏置后需要显式进入中位
+// 2. 已经在标定模式：更新偏置后不应再次触发“进入标定”的过渡
+bool robot_control_is_calibration_mode_active(void);
 bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JOINTS_PER_LEG]);
 bool robot_control_get_current_feet_world(vec3f_t out_feet_world[SCARGO_LEG_COUNT]);
 body_pose_t robot_control_get_current_body_pose(void);

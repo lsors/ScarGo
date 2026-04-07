@@ -302,6 +302,22 @@ static bool update_calibration_transition(float dt_s)
 
     s_calibration_progress_s += dt_s;
     float progress = s_calibration_progress_s / fmaxf(s_calibration_duration_s, 0.01f);
+    if (progress >= 1.0f) {
+        /*
+         * 标定进入过渡完成后，必须把控制权交给下面的“稳定标定态”分支。
+         *
+         * 如果这里继续返回 true，control_tick() 会永远停在过渡链里，
+         * Web 每次修改偏置时虽然数据已经更新，但稳定标定输出链永远不会被执行，
+         * 于是看起来就像“改偏置没有任何反应”。
+         */
+        progress = 1.0f;
+        for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+            s_current_feet_world[leg] = s_calibration_preview_target_feet_world[leg];
+        }
+        s_current_body_pose = s_calibration_preview_pose;
+        s_current_height_mm = s_calibration_preview_height_mm;
+        return false;
+    }
     float eased = smoothstepf(progress);
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
@@ -835,6 +851,11 @@ void robot_control_cancel_calibration_mode(void)
     s_calibration_mode_active = false;
     s_log_calibration_exit_once = true;
     s_log_stand_takeover_once = true;
+}
+
+bool robot_control_is_calibration_mode_active(void)
+{
+    return s_calibration_mode_active;
 }
 
 bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JOINTS_PER_LEG])
