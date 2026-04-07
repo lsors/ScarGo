@@ -656,7 +656,7 @@
         <p class="muted" data-i18n="gaitDesc">Tune runtime gait parameters and trigger test actions.</p>
       </div>
       <div id="runtime_status" class="status-panel">Loading status...</div>
-      <div class="hint" data-i18n="gaitHint">Recommended defaults: height 40 mm, cycle 350 ms, scale 1.0, stance 0.50, phase 0.00, stand height 140 mm.</div>
+      <div class="hint" data-i18n="gaitHint">Recommended defaults: height 40 mm, cycle 600 ms, scale 1.0, stance 0.50, phase 0.00, stand height 140 mm.</div>
       <div class="slider-card">
         <div class="slider-head">
           <label for="step_height" data-i18n="stepHeight">Step Height (mm)</label>
@@ -669,7 +669,7 @@
       <div class="slider-card">
         <div class="slider-head">
           <label for="step_cycle" data-i18n="cycleTime">Cycle Time (ms)</label>
-          <span class="slider-value" id="step_cycle_value">350 ms</span>
+          <span class="slider-value" id="step_cycle_value">600 ms</span>
         </div>
         <div class="param-state live" data-i18n="paramLive">Live in control</div>
         <input id="step_cycle" type="range">
@@ -796,7 +796,7 @@
     const jointNamesZh = ["关节 0 肩膀", "关节 1 大腿", "关节 2 小腿"];
     const gaitDefaults = {
       step_height_mm: 40,
-      step_cycle_ms: 350,
+      step_cycle_ms: 600,
       step_scale: 1.0,
       stance_ratio: 0.5,
       diagonal_phase_offset: 0.0,
@@ -851,7 +851,7 @@
         reload: "Reload",
         gaitTitle: "Gait Test",
         gaitDesc: "Tune runtime gait parameters and trigger test actions.",
-        gaitHint: "Recommended defaults: height 40 mm, cycle 350 ms, scale 1.0, stance 0.50, phase 0.00, stand height 140 mm.",
+        gaitHint: "Recommended defaults: height 40 mm, cycle 600 ms, scale 1.0, stance 0.50, phase 0.00, stand height 140 mm.",
         stepHeight: "Step Height (mm)",
         cycleTime: "Cycle Time (ms)",
         stepScale: "Step Scale",
@@ -918,7 +918,7 @@
         reload: "重新读取",
         gaitTitle: "步态测试",
         gaitDesc: "调整运行参数并触发测试动作。",
-        gaitHint: "推荐默认值：抬腿 40 mm，周期 350 ms，缩放 1.0，支撑比 0.50，错相 0.00，站高 140 mm。",
+        gaitHint: "推荐默认值：抬腿 40 mm，周期 600 ms，缩放 1.0，支撑比 0.50，错相 0.00，站高 140 mm。",
         stepHeight: "抬腿高度 (mm)",
         cycleTime: "步态周期 (ms)",
         stepScale: "步长缩放",

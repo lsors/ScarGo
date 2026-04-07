@@ -386,9 +386,49 @@ static float gait_step_height_effective_mm(const rc_command_t *command)
     return s_config.gait.step_height_mm;
 }
 
-static float walk_step_scale_from_throttle(const rc_command_t *command)
+/*
+ * walk 模式下，油门不再表示步长系数，而是表示“行进中的身体高度”。
+ *
+ * 归一化规则：
+ * - 遥控器低位(-1) -> 最低站立高度
+ * - 遥控器高位(+1) -> 最高站立高度
+ *
+ * 这样 walk 模式里：
+ * - pitch/roll/yaw 决定运动方向
+ * - throttle 只决定身体离地高度
+ */
+static float walk_height_ratio_from_throttle(const rc_command_t *command)
 {
-    return clampf_local(command->throttle + 1.0f, 0.0f, 2.0f);
+    if (command == NULL) {
+        return 0.5f;
+    }
+    return clampf_local((command->throttle + 1.0f) * 0.5f, 0.0f, 1.0f);
+}
+
+/*
+ * 行走中的站高由油门统一控制：
+ * - 低油门 -> 低站高
+ * - 高油门 -> 高站高
+ */
+static float walk_height_from_throttle(const rc_command_t *command)
+{
+    float ratio = walk_height_ratio_from_throttle(command);
+    return lerpf(s_config.gait.stand_height_min_mm, s_config.gait.stand_height_max_mm, ratio);
+}
+
+/*
+ * 抬腿高度与行进站高同步变化。
+ *
+ * 这样做的目的：
+ * - 站得低时，抬腿也低，避免在低姿态下腿部折叠过大造成机械干涉
+ * - 站得高时，抬腿同步增大，保证步态仍有足够离地间隙
+ *
+ * 这里直接复用 gait 配置里的最小/最大抬腿高度，让联动关系简单、连续、可控。
+ */
+static float walk_step_height_from_throttle(const rc_command_t *command)
+{
+    float ratio = walk_height_ratio_from_throttle(command);
+    return lerpf(s_config.gait.step_height_min_mm, s_config.gait.step_height_max_mm, ratio);
 }
 
 static body_pose_t move_pose_towards(body_pose_t current, body_pose_t target, float max_delta_deg)
@@ -503,7 +543,7 @@ static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_m
         return target;
     }
 
-    target.height_mm = s_config.gait.stand_height_default_mm;
+    target.height_mm = walk_height_from_throttle(command);
     target.yaw_deg = 0.0f;
     target.pitch_deg = 0.0f;
     target.roll_deg = 0.0f;
@@ -732,9 +772,8 @@ static void apply_walk_pose(const rc_command_t *command, const attitude_state_t 
 {
     static uint32_t steady_tick;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
-    float throttle_ratio = walk_step_scale_from_throttle(command);
-    float step_height = gait_step_height_effective_mm(command);
-    float stride = throttle_ratio * step_height * s_config.gait.step_scale;
+    float step_height = walk_step_height_from_throttle(command);
+    float stride = step_height * s_config.gait.step_scale;
     float cycle = fmaxf(gait_cycle_effective_ms(command) / 1000.0f, 0.15f);
     robot_target_pose_t target = make_target_pose(command, ROBOT_MODE_WALK);
     float stand_height = s_transition_active ? s_current_height_mm : target.height_mm;
