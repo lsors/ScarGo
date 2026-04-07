@@ -50,11 +50,38 @@ static bool s_transition_active;
 static robot_posture_t s_posture = ROBOT_POSTURE_STAND;
 static robot_motion_speed_t s_motion_speed = ROBOT_MOTION_SPEED_MEDIUM;
 static bool s_calibration_mode_active;
+static bool s_log_calibration_exit_once;
+static bool s_log_stand_takeover_once;
+
+/*
+ * 打印四条腿小腿关节在当前输出链下的基角/实际角，专门用于定位标定与运行态切换问题。
+ *
+ * 这里只看 joint=2（小腿），因为当前最关键的问题就集中在：
+ * - 标定稳定态时是否真正停在安装中位附近
+ * - 退出标定第一帧时，小腿是否被某条运行态公式重新翻到另一侧
+ */
+static void log_all_calf_outputs(const char *label,
+                                 const float angles_deg[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG],
+                                 const calibration_config_t *calibration)
+{
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        float base = angles_deg[leg][SCARGO_JOINT_CALF];
+        float actual = servo_output_get_actual_angle_deg(leg, SCARGO_JOINT_CALF, base);
+        ESP_LOGI(TAG, "%s leg=%d joint=2 base=%.1f actual=%.1f offset=%d",
+                 label,
+                 leg,
+                 base,
+                 actual,
+                 calibration->servo_offsets_deg[leg][SCARGO_JOINT_CALF]);
+    }
+}
 static bool s_servo_enabled;
 static int16_t s_last_aux_sa;
 static int16_t s_last_aux_sd;
 static float s_calibration_start_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
 static float s_calibration_target_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
+static float s_calibration_start_actual_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
+static float s_calibration_target_actual_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
 static float s_calibration_progress_s;
 static float s_calibration_duration_s;
 static vec3f_t s_calibration_preview_start_feet_world[SCARGO_LEG_COUNT];
@@ -231,6 +258,16 @@ static void begin_calibration_mid_pose_transition(void)
     }
 
     /*
+     * 标定进入过渡的起点必须使用“当前真实舵机角”，而不是安装层基础角。
+     *
+     * 否则如果运行态小腿已经经过了执行层修正，直接拿基础角做起点，
+     * 真机会先从当前实际角瞬间跳到基础角，再开始往 90 度过渡。
+     */
+    servo_output_compute_actual_group_angles_deg(s_calibration_start_angles, s_calibration_start_actual_angles);
+    servo_output_compute_calibration_actual_group_angles_deg(
+        s_calibration_target_angles, s_calibration_target_actual_angles);
+
+    /*
      * 标定预览目标不从“90/90/90 舵机角”反推，
      * 而是直接使用我们定义的中位几何姿态：
      * - shoulder = 0
@@ -270,8 +307,8 @@ static bool update_calibration_transition(float dt_s)
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
         for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
             s_target_angles[leg][joint] = lerpf(
-                s_calibration_start_angles[leg][joint],
-                s_calibration_target_angles[leg][joint],
+                s_calibration_start_actual_angles[leg][joint],
+                s_calibration_target_actual_angles[leg][joint],
                 eased);
         }
         s_current_feet_world[leg] = lerp_vec3(
@@ -282,7 +319,11 @@ static bool update_calibration_transition(float dt_s)
 
     s_current_body_pose = s_calibration_preview_pose;
     s_current_height_mm = s_calibration_preview_height_mm;
-    servo_output_set_group_angles_deg(s_target_angles);
+    /*
+     * 标定进入过程虽然仍然使用角度插值，但真实输出必须切到“标定专用输出链”。
+     * 这样小腿在逼近 90/90/90 时，不会被运行态的小腿修正公式提前拉到 0/180 一侧。
+     */
+    servo_output_set_actual_group_angles_deg(s_target_angles);
     return true;
 }
 
@@ -514,6 +555,14 @@ static void solve_and_apply_feet(const vec3f_t feet_world[SCARGO_LEG_COUNT], flo
         s_target_angles[leg][SCARGO_JOINT_SHOULDER] = pose_solution.shoulder_deg;
         s_target_angles[leg][SCARGO_JOINT_THIGH] = pose_solution.thigh_servo_deg;
         s_target_angles[leg][SCARGO_JOINT_CALF] = pose_solution.calf_servo_deg;
+
+        if (s_log_stand_takeover_once) {
+            servo_output_log_calf_pipeline(leg, pose_solution.thigh_servo_deg, pose_solution.calf_servo_deg);
+        }
+    }
+
+    if (s_log_stand_takeover_once) {
+        s_log_stand_takeover_once = false;
     }
 }
 
@@ -729,6 +778,8 @@ void robot_control_init(const system_config_t *config)
     s_current_body_pose = (body_pose_t){0};
     s_posture = ROBOT_POSTURE_LIE;
     s_servo_enabled = false;
+    s_log_calibration_exit_once = false;
+    s_log_stand_takeover_once = false;
     s_last_aux_sa = 0;
     s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
@@ -782,6 +833,8 @@ robot_motion_speed_t robot_control_get_motion_speed(void)
 void robot_control_cancel_calibration_mode(void)
 {
     s_calibration_mode_active = false;
+    s_log_calibration_exit_once = true;
+    s_log_stand_takeover_once = true;
 }
 
 bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JOINTS_PER_LEG])
@@ -885,6 +938,33 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
         return;
+    }
+
+    if (s_calibration_mode_active) {
+        /*
+         * 标定稳定态：
+         * - OLED 继续显示安装层定义的中位预览
+         * - 真实舵机输出固定停在 90/90/90 + offset 对应的安装位
+         * - 不再复用正常运行态的小腿修正链
+         */
+        fill_mid_pose(s_target_angles);
+        copy_feet(s_current_feet_world, s_calibration_preview_target_feet_world);
+        s_current_body_pose = s_calibration_preview_pose;
+        s_current_height_mm = s_calibration_preview_height_mm;
+        servo_output_set_calibration_group_angles_deg(s_target_angles);
+
+        if ((tick_counter % 100U) == 0U) {
+            log_all_calf_outputs("calib hold", s_target_angles, &s_config.calibration);
+            ESP_LOGI(TAG, "calibration mode active");
+        }
+        s_last_aux_sa = command->aux_sa;
+        s_last_aux_sd = command->aux_sd;
+        return;
+    }
+
+    if (s_log_calibration_exit_once) {
+        log_all_calf_outputs("calib exit first tick", s_target_angles, &s_config.calibration);
+        s_log_calibration_exit_once = false;
     }
 
     if (!command->walk_mode && command->aux_sd > 0 && s_last_aux_sd <= 0) {
