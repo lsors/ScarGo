@@ -25,6 +25,10 @@ static const buzzer_beep_step_t PAGE_CONNECT_PATTERN[] = {
 };
 
 static const buzzer_beep_step_t ELRS_CONNECT_PATTERN[] = {
+    {.on_ms = 45, .off_ms = 0},
+};
+
+static const buzzer_beep_step_t RC_UNLOCK_PATTERN[] = {
     {.on_ms = 45, .off_ms = 70},
     {.on_ms = 45, .off_ms = 0},
 };
@@ -118,6 +122,12 @@ void buzzer_service_elrs_connect_beep(void)
 {
     ESP_LOGI(TAG, "ELRS connect beep");
     buzzer_service_play_pattern(ELRS_CONNECT_PATTERN, sizeof(ELRS_CONNECT_PATTERN) / sizeof(ELRS_CONNECT_PATTERN[0]));
+}
+
+void buzzer_service_rc_unlock_beep(void)
+{
+    ESP_LOGI(TAG, "RC unlock beep");
+    buzzer_service_play_pattern(RC_UNLOCK_PATTERN, sizeof(RC_UNLOCK_PATTERN) / sizeof(RC_UNLOCK_PATTERN[0]));
 }
 
 void buzzer_service_save_beep(void)

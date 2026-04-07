@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "board_defaults.h"
+#include "buzzer_service.h"
 #include "esp_log.h"
 #include "kinematics.h"
 #include "servo_output.h"
@@ -52,6 +53,7 @@ static robot_motion_speed_t s_motion_speed = ROBOT_MOTION_SPEED_MEDIUM;
 static bool s_calibration_mode_active;
 static bool s_log_calibration_exit_once;
 static bool s_log_stand_takeover_once;
+static bool s_rc_control_unlocked;
 
 /*
  * 打印四条腿小腿关节在当前输出链下的基角/实际角，专门用于定位标定与运行态切换问题。
@@ -362,6 +364,9 @@ static float gait_cycle_effective_ms(const rc_command_t *command)
 
 static float stand_height_from_sb(int16_t aux_sb)
 {
+    if (aux_sb < 0) {
+        return s_config.gait.stand_height_min_mm;
+    }
     if (aux_sb > 0) {
         return s_config.gait.stand_height_max_mm;
     }
@@ -825,6 +830,8 @@ static void apply_walk_pose(const rc_command_t *command, const attitude_state_t 
 
 void robot_control_init(const system_config_t *config)
 {
+    vec3f_t startup_feet_world[SCARGO_LEG_COUNT];
+
     s_config = *config;
     kinematics_default_feet(s_default_feet_world, config->gait.stand_height_default_mm);
     kinematics_rest_feet(s_rest_feet_world, config->gait.stand_height_default_mm);
@@ -832,13 +839,28 @@ void robot_control_init(const system_config_t *config)
     s_current_height_mm = SCARGO_LIE_HEIGHT_MM;
     s_current_body_pose = (body_pose_t){0};
     s_posture = ROBOT_POSTURE_LIE;
-    s_servo_enabled = false;
+    /*
+     * 上电后先自动进入“最低站立安全位”。
+     *
+     * 此时舵机允许工作，但遥控仍处于锁定状态：
+     * - 只有当用户把遥控切到约定的最低站立模式
+     * - 才会发出滴滴提示音，并开始接受遥控操作
+     */
+    s_servo_enabled = true;
+    s_rc_control_unlocked = false;
     s_log_calibration_exit_once = false;
     s_log_stand_takeover_once = false;
     s_last_aux_sa = 0;
     s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
     servo_output_init(&config->calibration);
+    kinematics_default_feet(startup_feet_world, config->gait.stand_height_min_mm);
+    begin_posture_transition(ROBOT_POSTURE_STAND,
+                             config->gait.stand_height_min_mm,
+                             startup_feet_world,
+                             &(body_pose_t){0},
+                             SCARGO_POSTURE_LIFT_MM * 0.5f);
+    s_mode = ROBOT_MODE_STAND;
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &s_current_body_pose);
     log_mid_pose_forward_kinematics();
     ESP_LOGI(TAG, "Robot control initialized");
@@ -953,31 +975,39 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     static uint32_t tick_counter = 0;
     ++tick_counter;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
-    const bool sa_toggled = command->aux_sa != s_last_aux_sa;
-    const bool sa_toggled_to_stand = sa_toggled && !command->walk_mode;
+    const bool rc_ready_mode = command->link_up && !command->walk_mode && command->aux_sb < 0 && command->aux_sd <= 0;
 
     if (!s_servo_enabled) {
-        /*
-         * 上电后默认不驱动舵机。
-         * 只有以下显式动作才允许启动：
-         * 1. 用户通过遥控切换 SA 且到达 stand，明确进入站立模式
-         * 2. Web 标定页调用 robot_control_apply_mid_pose()（在那里单独置位）
-         *
-         * 如果遥控器在开机时本来就停在某个站立/行走档位，不自动启动舵机。
-         * 并且首次激活不允许直接进入 walk，也不允许通过遥控直接进入 calibration。
-         * 首次通过遥控启动，只能进入 stand；
-         * 首次通过 Web 启动，才能进入 calibration/mid pose。
-         */
-        if (sa_toggled_to_stand) {
-            s_servo_enabled = true;
+        s_last_aux_sa = command->aux_sa;
+        s_last_aux_sd = command->aux_sd;
+        return;
+    }
+
+    update_transition(dt_s);
+
+    if (!s_rc_control_unlocked) {
+        if (rc_ready_mode) {
+            s_rc_control_unlocked = true;
+            buzzer_service_rc_unlock_beep();
         } else {
+            /*
+             * 遥控尚未解锁前，始终保持在最低站立安全位。
+             * 这时忽略所有实时遥控输入，只维持一个稳定、可预期的起始姿态。
+             */
+            rc_command_t hold_command = *command;
+            hold_command.walk_mode = false;
+            hold_command.aux_sb = -1;
+            hold_command.aux_sd = 0;
+            hold_command.yaw = 0.0f;
+            hold_command.pitch = 0.0f;
+            hold_command.roll = 0.0f;
+            hold_command.throttle = -1.0f;
+            apply_stand_pose(&hold_command, attitude);
             s_last_aux_sa = command->aux_sa;
             s_last_aux_sd = command->aux_sd;
             return;
         }
     }
-
-    update_transition(dt_s);
 
     if (s_calibration_mode_active && command->aux_sd <= 0 && s_last_aux_sd > 0) {
         robot_control_cancel_calibration_mode();
