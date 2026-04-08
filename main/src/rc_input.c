@@ -89,6 +89,13 @@ static void update_command_from_channels(const uint16_t *channels, size_t count)
         return;
     }
 
+    /*
+     * 当前遥控器四个主通道顺序已经通过实测确认：
+     * - ch0 : roll
+     * - ch1 : pitch
+     * - ch2 : throttle
+     * - ch3 : yaw
+     */
     s_command.roll = normalize_centered_channel(channels[0]);
     s_command.pitch = normalize_centered_channel(channels[1]);
     s_command.throttle = normalize_throttle_channel(channels[2]);

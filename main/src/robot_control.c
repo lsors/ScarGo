@@ -15,7 +15,6 @@ static const float SCARGO_LIE_HEIGHT_MM = 92.0f;
 static const float SCARGO_POSTURE_LIFT_MM = 18.0f;
 static const float SCARGO_POSTURE_LIFT_LIE_MM = 10.0f;
 static const float SCARGO_WALK_START_DURATION_S = 0.45f;
-static const float SCARGO_STAND_TRANSLATION_LIMIT_MM = 50.0f;
 
 typedef enum {
     ROBOT_POSTURE_STAND = 0,
@@ -362,47 +361,18 @@ static float gait_cycle_effective_ms(const rc_command_t *command)
     return s_config.gait.step_cycle_ms;
 }
 
-static float stand_height_from_sb(int16_t aux_sb)
-{
-    if (aux_sb < 0) {
-        return s_config.gait.stand_height_min_mm;
-    }
-    if (aux_sb > 0) {
-        return s_config.gait.stand_height_max_mm;
-    }
-    return s_config.gait.stand_height_default_mm;
-}
-
-static float gait_step_height_effective_mm(const rc_command_t *command)
-{
-    // 与周期逻辑相同：
-    // - 未连接前，默认使用 Web 当前值
-    // - 连接后，由 SC 三档覆盖
-    // - 断链后，保持最后一次收到的档位，不自动跳回 Web 值
-    if (command == NULL) {
-        return s_config.gait.step_height_mm;
-    }
-    if (command->aux_sc < 0) {
-        return s_config.gait.step_height_min_mm;
-    }
-    if (command->aux_sc > 0) {
-        return s_config.gait.step_height_max_mm;
-    }
-    return s_config.gait.step_height_mm;
-}
-
 /*
- * walk 模式下，油门不再表示步长系数，而是表示“行进中的身体高度”。
+ * 站立/行走两种模式下，油门统一表示“身体高度”。
  *
  * 归一化规则：
  * - 遥控器低位(-1) -> 最低站立高度
  * - 遥控器高位(+1) -> 最高站立高度
  *
- * 这样 walk 模式里：
- * - pitch/roll/yaw 决定运动方向
- * - throttle 只决定身体离地高度
+ * 这样现在：
+ * - stand 模式：油门控制站高
+ * - walk  模式：油门也控制行进高度
  */
-static float walk_height_ratio_from_throttle(const rc_command_t *command)
+static float body_height_ratio_from_throttle(const rc_command_t *command)
 {
     if (command == NULL) {
         return 0.5f;
@@ -411,13 +381,13 @@ static float walk_height_ratio_from_throttle(const rc_command_t *command)
 }
 
 /*
- * 行走中的站高由油门统一控制：
+ * 身体高度由油门统一控制：
  * - 低油门 -> 低站高
  * - 高油门 -> 高站高
  */
-static float walk_height_from_throttle(const rc_command_t *command)
+static float body_height_from_throttle(const rc_command_t *command)
 {
-    float ratio = walk_height_ratio_from_throttle(command);
+    float ratio = body_height_ratio_from_throttle(command);
     return lerpf(s_config.gait.stand_height_min_mm, s_config.gait.stand_height_max_mm, ratio);
 }
 
@@ -432,7 +402,7 @@ static float walk_height_from_throttle(const rc_command_t *command)
  */
 static float walk_step_height_from_throttle(const rc_command_t *command)
 {
-    float ratio = walk_height_ratio_from_throttle(command);
+    float ratio = body_height_ratio_from_throttle(command);
     return lerpf(s_config.gait.step_height_min_mm, s_config.gait.step_height_max_mm, ratio);
 }
 
@@ -533,22 +503,19 @@ static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_m
     };
 
     if (mode == ROBOT_MODE_STAND) {
-        target.height_mm = stand_height_from_sb(command->aux_sb);
+        target.height_mm = body_height_from_throttle(command);
         target.yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg;
-        if (command->aux_sb < 0) {
-            target.pitch_deg = 0.0f;
-            target.roll_deg = 0.0f;
-        } else {
-            // User convention:
-            // pitch stick -> body rotation around +X
-            // roll stick -> body rotation around +Y
-            target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
-            target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
-        }
+        // 站立模式下取消 SB 对姿态控制的分支影响。
+        // 当前统一语义：
+        // - yaw   -> 机身绕 z 轴旋转（±45°）
+        // - pitch -> 机身绕 x 轴旋转
+        // - roll  -> 机身绕 y 轴旋转
+        target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
+        target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
         return target;
     }
 
-    target.height_mm = walk_height_from_throttle(command);
+    target.height_mm = body_height_from_throttle(command);
     target.yaw_deg = 0.0f;
     target.pitch_deg = 0.0f;
     target.roll_deg = 0.0f;
@@ -660,9 +627,11 @@ static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
 // - 四个足端相对地面固定
 // - 机身高度、姿态、平移由遥控输入缓慢逼近目标
 //
-// 当前实现里：
-// - SB 中/高段：站高 + 机身姿态
-// - SB 低段    ：站高 + 机身在 x/y 平面平移
+// 当前实现里，站立模式完全不再使用 SB。
+// - 油门      ：站高
+// - yaw      ：机身绕 z 轴
+// - pitch    ：机身绕 x 轴
+// - roll     ：机身绕 y 轴
 static void apply_stand_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
@@ -685,14 +654,6 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
         target.height_mm = SCARGO_LIE_HEIGHT_MM;
         copy_feet(s_current_feet_world, s_rest_feet_world);
     } else if (!s_transition_active) {
-        if (command->aux_sb < 0) {
-            float body_shift_x = clampf_local(command->roll, -1.0f, 1.0f) * SCARGO_STAND_TRANSLATION_LIMIT_MM;
-            float body_shift_y = clampf_local(command->pitch, -1.0f, 1.0f) * SCARGO_STAND_TRANSLATION_LIMIT_MM;
-            for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-                feet_target[leg].x_mm -= body_shift_x;
-                feet_target[leg].y_mm -= body_shift_y;
-            }
-        }
         s_current_height_mm = move_towards(s_current_height_mm, target.height_mm, height_speed_mm_s * dt_s);
         s_current_body_pose = move_pose_towards(s_current_body_pose, pose_target, body_speed_deg_s * dt_s);
         for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
@@ -957,15 +918,11 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
         .yaw_deg = walk_mode ? 0.0f : -command->yaw * s_config.gait.max_body_yaw_deg,
         .pitch_deg = 0.0f,
         .roll_deg = 0.0f,
-        .height_mm = walk_mode
-                         ? s_config.gait.stand_height_default_mm
-                         : stand_height_from_sb(command->aux_sb),
+        .height_mm = body_height_from_throttle(command),
     };
     if (!walk_mode) {
-        if (command->aux_sb >= 0) {
-            target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
-            target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
-        }
+        target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
+        target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
     }
     return target;
 }
@@ -975,7 +932,8 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     static uint32_t tick_counter = 0;
     ++tick_counter;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
-    const bool rc_ready_mode = command->link_up && !command->walk_mode && command->aux_sb < 0 && command->aux_sd <= 0;
+    const bool rc_ready_mode = command->link_up && !command->walk_mode &&
+                               command->throttle <= -0.95f && command->aux_sd <= 0;
 
     if (!s_servo_enabled) {
         s_last_aux_sa = command->aux_sa;
@@ -996,7 +954,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
              */
             rc_command_t hold_command = *command;
             hold_command.walk_mode = false;
-            hold_command.aux_sb = -1;
+            hold_command.aux_sb = 0;
             hold_command.aux_sd = 0;
             hold_command.yaw = 0.0f;
             hold_command.pitch = 0.0f;
@@ -1012,7 +970,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     if (s_calibration_mode_active && command->aux_sd <= 0 && s_last_aux_sd > 0) {
         robot_control_cancel_calibration_mode();
         begin_posture_transition(ROBOT_POSTURE_STAND,
-                                 stand_height_from_sb(command->aux_sb),
+                                 body_height_from_throttle(command),
                                  s_default_feet_world,
                                  &(body_pose_t){0},
                                  SCARGO_POSTURE_LIFT_MM * 0.5f);
@@ -1067,20 +1025,9 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
 
     if (!command->walk_mode) {
-        if (command->aux_sb < 0) {
-            if (s_posture != ROBOT_POSTURE_LIE && !s_transition_active) {
-                begin_posture_transition(ROBOT_POSTURE_LIE,
-                                         SCARGO_LIE_HEIGHT_MM,
-                                         s_rest_feet_world,
-                                         &(body_pose_t){0},
-                                         SCARGO_POSTURE_LIFT_LIE_MM);
-                s_mode = ROBOT_MODE_STAND;
-                s_walk_phase = WALK_PHASE_IDLE;
-                s_walk_phase_progress = 0.0f;
-            }
-        } else if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active) {
+        if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active) {
             begin_posture_transition(ROBOT_POSTURE_STAND,
-                                     stand_height_from_sb(command->aux_sb),
+                                     body_height_from_throttle(command),
                                      s_default_feet_world,
                                      &(body_pose_t){0},
                                      SCARGO_POSTURE_LIFT_MM);
@@ -1091,21 +1038,21 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     if (s_pending_action != ROBOT_ACTION_NONE) {
         switch (s_pending_action) {
         case ROBOT_ACTION_STAND:
-            if (s_mode == ROBOT_MODE_WALK && (s_walk_phase == WALK_PHASE_STEADY || s_walk_phase == WALK_PHASE_START)) {
-                s_walk_phase = WALK_PHASE_IDLE;
-                s_walk_phase_progress = 0.0f;
-                begin_posture_transition(ROBOT_POSTURE_STAND,
-                                         s_config.gait.stand_height_default_mm,
-                                         s_default_feet_world,
-                                         &(body_pose_t){0},
-                                         SCARGO_POSTURE_LIFT_MM * 0.5f);
-                s_mode = ROBOT_MODE_STAND;
-            } else {
-                begin_posture_transition(ROBOT_POSTURE_STAND,
-                                         s_config.gait.stand_height_default_mm,
-                                         s_default_feet_world,
-                                         &(body_pose_t){0},
-                                         SCARGO_POSTURE_LIFT_MM);
+        if (s_mode == ROBOT_MODE_WALK && (s_walk_phase == WALK_PHASE_STEADY || s_walk_phase == WALK_PHASE_START)) {
+            s_walk_phase = WALK_PHASE_IDLE;
+            s_walk_phase_progress = 0.0f;
+            begin_posture_transition(ROBOT_POSTURE_STAND,
+                                     body_height_from_throttle(command),
+                                     s_default_feet_world,
+                                     &(body_pose_t){0},
+                                     SCARGO_POSTURE_LIFT_MM * 0.5f);
+            s_mode = ROBOT_MODE_STAND;
+        } else {
+            begin_posture_transition(ROBOT_POSTURE_STAND,
+                                     body_height_from_throttle(command),
+                                     s_default_feet_world,
+                                     &(body_pose_t){0},
+                                     SCARGO_POSTURE_LIFT_MM);
                 s_mode = ROBOT_MODE_STAND;
             }
             break;
@@ -1149,7 +1096,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     if (command->walk_mode) {
         if (s_posture == ROBOT_POSTURE_LIE) {
             begin_posture_transition(ROBOT_POSTURE_STAND,
-                                     s_config.gait.stand_height_default_mm,
+                                     body_height_from_throttle(command),
                                      s_default_feet_world,
                                      &(body_pose_t){0},
                                      SCARGO_POSTURE_LIFT_MM);
@@ -1165,12 +1112,12 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
         begin_posture_transition(ROBOT_POSTURE_STAND,
-                                 stand_height_from_sb(command->aux_sb),
+                                 body_height_from_throttle(command),
                                  s_default_feet_world,
                                  &(body_pose_t){
                                      .yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg,
-                                     .pitch_deg = command->aux_sb >= 0 ? command->roll * s_config.gait.max_body_roll_deg : 0.0f,
-                                     .roll_deg = command->aux_sb >= 0 ? -command->pitch * s_config.gait.max_body_pitch_deg : 0.0f,
+                                     .pitch_deg = command->roll * s_config.gait.max_body_roll_deg,
+                                     .roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg,
                                  },
                                  SCARGO_POSTURE_LIFT_MM * 0.5f);
         s_mode = ROBOT_MODE_STAND;
