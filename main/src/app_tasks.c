@@ -4,6 +4,7 @@
 #include "cpu_usage_service.h"
 #include "display_service.h"
 #include "esp_log.h"
+#include "fan_service.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu_service.h"
@@ -61,6 +62,7 @@ static void ui_task(void *arg)
 
     while (true) {
         cpu_usage_service_tick();
+        fan_service_tick();
         display_service_tick();
         vTaskDelay(delay_ticks);
     }
@@ -83,6 +85,7 @@ void app_tasks_start(const system_config_t *config)
     cpu_usage_service_init();
     imu_service_init();
     rc_input_init();
+    fan_service_init();
     display_service_init();
     display_service_set_page((display_page_t)config->oled.page);
     display_service_set_leg_preview_selection(config->oled.leg);

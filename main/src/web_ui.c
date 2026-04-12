@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "fan_service.h"
 #include "imu_service.h"
 #include "rc_input.h"
 #include "robot_control.h"
@@ -169,6 +170,42 @@ static bool preview_view_from_name(const char *name, display_preview_view_t *out
     }
     if (strcmp(name, "iso") == 0 || strcmp(name, "stereo") == 0) {
         *out_view = DISPLAY_PREVIEW_VIEW_ISO;
+        return true;
+    }
+    return false;
+}
+
+static const char *fan_level_name(fan_speed_level_t level)
+{
+    switch (level) {
+    case FAN_SPEED_OFF:
+        return "off";
+    case FAN_SPEED_LOW:
+        return "low";
+    case FAN_SPEED_HIGH:
+        return "high";
+    case FAN_SPEED_MEDIUM:
+    default:
+        return "medium";
+    }
+}
+
+static bool fan_level_from_name(const char *name, fan_speed_level_t *out_level)
+{
+    if (strcmp(name, "off") == 0) {
+        *out_level = FAN_SPEED_OFF;
+        return true;
+    }
+    if (strcmp(name, "low") == 0) {
+        *out_level = FAN_SPEED_LOW;
+        return true;
+    }
+    if (strcmp(name, "medium") == 0) {
+        *out_level = FAN_SPEED_MEDIUM;
+        return true;
+    }
+    if (strcmp(name, "high") == 0) {
+        *out_level = FAN_SPEED_HIGH;
         return true;
     }
     return false;
@@ -499,6 +536,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 {
     attitude_state_t attitude = imu_service_get_attitude();
     rc_command_t command = rc_input_get_latest();
+    fan_status_t fan = fan_service_get_status();
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "mode", robot_control_get_mode() == ROBOT_MODE_WALK ? "walk" : "stand");
     cJSON_AddBoolToObject(root, "rc_link", command.link_up);
@@ -518,6 +556,13 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "oled_leg", display_service_get_leg_preview_selection());
     cJSON_AddStringToObject(root, "oled_leg_view", preview_view_name(display_service_get_leg_preview_view()));
     cJSON_AddStringToObject(root, "oled_robot_view", preview_view_name(display_service_get_robot_preview_view()));
+    cJSON_AddStringToObject(root, "fan_effective_level", fan_level_name(fan.effective_level));
+    cJSON_AddStringToObject(root, "fan_manual_level", fan_level_name(fan.manual_level));
+    cJSON_AddBoolToObject(root, "fan_manual_override", fan.manual_override);
+    cJSON_AddBoolToObject(root, "fan_rc_link_up", fan.rc_link_up);
+    cJSON_AddBoolToObject(root, "fan_at_min_height", fan.at_min_height);
+    cJSON_AddBoolToObject(root, "fan_tach_ready", fan.tach_ready);
+    cJSON_AddNumberToObject(root, "fan_rpm", (double)fan.rpm);
 
     char *json = cJSON_PrintUnformatted(root);
     esp_err_t err = send_json(req, json);
@@ -608,6 +653,64 @@ static esp_err_t imu_yaw_zero_post_handler(httpd_req_t *req)
     (void)req;
     imu_service_zero_yaw();
     return send_json(req, "{\"status\":\"imu_yaw_zeroed\"}");
+}
+
+static esp_err_t fan_get_handler(httpd_req_t *req)
+{
+    fan_status_t fan = fan_service_get_status();
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "manual_override", fan.manual_override);
+    cJSON_AddBoolToObject(root, "rc_link_up", fan.rc_link_up);
+    cJSON_AddStringToObject(root, "manual_level", fan_level_name(fan.manual_level));
+    cJSON_AddStringToObject(root, "effective_level", fan_level_name(fan.effective_level));
+    cJSON_AddStringToObject(root, "mode", fan.walk_mode ? "walk" : "stand");
+    cJSON_AddBoolToObject(root, "at_min_height", fan.at_min_height);
+    cJSON_AddBoolToObject(root, "tach_ready", fan.tach_ready);
+    cJSON_AddNumberToObject(root, "rpm", (double)fan.rpm);
+    cJSON_AddStringToObject(root, "source", fan.manual_override ? "manual" : "mode");
+
+    char *json = cJSON_PrintUnformatted(root);
+    esp_err_t err = send_json(req, json);
+    cJSON_free(json);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t fan_post_handler(httpd_req_t *req)
+{
+    char *content = read_request_body(req);
+    if (content == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
+    }
+
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    }
+
+    cJSON *mode_item = cJSON_GetObjectItem(root, "mode");
+    if (cJSON_IsString(mode_item) && strcmp(mode_item->valuestring, "auto") == 0) {
+        fan_service_clear_manual_override();
+        cJSON_Delete(root);
+        return send_json(req, "{\"status\":\"fan_saved\"}");
+    }
+
+    cJSON *level_item = cJSON_GetObjectItem(root, "level");
+    if (!cJSON_IsString(level_item)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing level");
+    }
+
+    fan_speed_level_t level;
+    if (!fan_level_from_name(level_item->valuestring, &level)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid level");
+    }
+
+    fan_service_set_manual_level(level);
+    cJSON_Delete(root);
+    return send_json(req, "{\"status\":\"fan_saved\"}");
 }
 
 static esp_err_t calibration_file_get_handler(httpd_req_t *req)
@@ -743,6 +846,18 @@ void web_ui_start(system_config_t *config)
         .handler = imu_yaw_zero_post_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t fan_get = {
+        .uri = "/api/fan",
+        .method = HTTP_GET,
+        .handler = fan_get_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t fan_post = {
+        .uri = "/api/fan",
+        .method = HTTP_POST,
+        .handler = fan_post_handler,
+        .user_ctx = NULL,
+    };
     httpd_uri_t calibration_file_get = {
         .uri = "/api/debug/calibration-file",
         .method = HTTP_GET,
@@ -768,6 +883,8 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &oled_page_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &oled_page_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_yaw_zero_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &fan_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &fan_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_file_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_file_get));
 

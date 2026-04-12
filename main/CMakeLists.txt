@@ -6,6 +6,7 @@ set(SOURCES
     src/config_store.c
     src/cpu_usage_service.c
     src/display_service.c
+    src/fan_service.c
     src/imu_service.c
     src/kinematics.c
     src/pca9685_driver.c

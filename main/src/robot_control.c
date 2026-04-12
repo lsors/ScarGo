@@ -7,6 +7,7 @@
 #include "board_defaults.h"
 #include "buzzer_service.h"
 #include "esp_log.h"
+#include "fan_service.h"
 #include "kinematics.h"
 #include "servo_output.h"
 
@@ -122,6 +123,17 @@ static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase);
 static const char *walk_status_name(robot_walk_status_t status);
 /* 把单腿状态转换成日志/OLED 统一使用的短字符串。 */
 static const char *walk_leg_state_name(robot_walk_leg_state_t state);
+
+static void update_fan_auto_context(bool rc_link_up)
+{
+    bool walk_mode = s_mode == ROBOT_MODE_WALK;
+    float stand_height_range_mm = s_config.gait.stand_height_max_mm - s_config.gait.stand_height_min_mm;
+    float fan_off_band_mm = fmaxf(1.0f, stand_height_range_mm * 0.05f);
+    bool at_min_height = !walk_mode && s_current_height_mm <= (s_config.gait.stand_height_min_mm + fan_off_band_mm);
+    fan_service_set_rc_link(rc_link_up);
+    fan_service_set_motion_mode(walk_mode);
+    fan_service_set_at_min_height(at_min_height);
+}
 
 static float clampf_local(float value, float min_value, float max_value)
 {
@@ -1228,6 +1240,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             hold_command.roll = 0.0f;
             hold_command.throttle = -1.0f;
             apply_stand_pose(&hold_command, attitude);
+            update_fan_auto_context(command->link_up);
             s_last_aux_sa = command->aux_sa;
             s_last_aux_sd = command->aux_sd;
             return;
@@ -1250,6 +1263,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         if ((tick_counter % 100U) == 0U) {
             ESP_LOGI(TAG, "calibration mode active");
         }
+        update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
         return;
@@ -1272,6 +1286,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             log_all_calf_outputs("calib hold", s_target_angles, &s_config.calibration);
             ESP_LOGI(TAG, "calibration mode active");
         }
+        update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
         return;
@@ -1287,6 +1302,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_pending_action = ROBOT_ACTION_NONE;
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
+        update_fan_auto_context(command->link_up);
         s_last_aux_sd = command->aux_sd;
         return;
     }
@@ -1394,6 +1410,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         apply_walk_pose(command, attitude);
     }
 
+    update_fan_auto_context(command->link_up);
     servo_output_set_group_angles_deg(s_target_angles);
 
     if ((tick_counter % 100U) == 0U) {

@@ -621,9 +621,10 @@
         </div>
       </div>
     </div>
-      <div class="page-nav" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
+      <div class="page-nav" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
         <button id="page-tab-calibration" class="active" onclick="showPage('calibration')" data-i18n="pageCalibration">Calibration</button>
         <button id="page-tab-gait" onclick="showPage('gait')" data-i18n="pageGait">Gait Test</button>
+        <button id="page-tab-fan" onclick="showPage('fan')" data-i18n="pageFan">Fan</button>
         <button id="page-tab-oled" onclick="showPage('oled')" data-i18n="pageOled">OLED</button>
       </div>
   </header>
@@ -729,6 +730,22 @@
       </div>
     </section>
 
+    <section id="page-fan" class="card tab page">
+      <div class="section-head">
+        <h2 data-i18n="fanControl">Fan Control</h2>
+        <p class="muted" data-i18n="fanHint">Default behavior is low speed in stand mode and medium speed in walk mode. Manual selection overrides that until you switch back to follow mode.</p>
+      </div>
+      <div id="fan_status" class="status-panel">Loading fan status...</div>
+      <div class="hint" data-i18n="fanRpmHint">The fan tach signal is read from GPIO5 and displayed here as live RPM.</div>
+      <div class="button-row">
+        <button id="fan-mode-auto" class="ghost" onclick="setFanAuto()" data-i18n="fanFollowMode">Follow Mode</button>
+        <button id="fan-level-off" class="ghost" onclick="setFanLevel('off')" data-i18n="fanOff">Off</button>
+        <button id="fan-level-low" class="ghost" onclick="setFanLevel('low')" data-i18n="fanLow">Low</button>
+        <button id="fan-level-medium" class="ghost" onclick="setFanLevel('medium')" data-i18n="fanMedium">Medium</button>
+        <button id="fan-level-high" class="ghost" onclick="setFanLevel('high')" data-i18n="fanHigh">High</button>
+      </div>
+    </section>
+
     <section id="page-oled" class="card tab page">
       <div class="section-head">
         <h2 data-i18n="oledControl">OLED Display</h2>
@@ -790,6 +807,7 @@
     let currentOledLeg = 0;
     let currentOledLegView = "iso";
     let currentOledRobotView = "iso";
+    let currentFanStatus = null;
     const legNames = ["0 Right Front", "1 Left Front", "2 Right Rear", "3 Left Rear"];
     const legNamesZh = ["0 右前腿", "1 左前腿", "2 右后腿", "3 左后腿"];
     const jointNames = ["Joint 0 Shoulder", "Joint 1 Thigh", "Joint 2 Calf"];
@@ -816,7 +834,32 @@
         subtitle: "Calibration, gait tuning, and test actions",
         pageCalibration: "Calibration",
         pageGait: "Gait Test",
+        pageFan: "Fan",
         pageOled: "OLED",
+        fanControl: "Fan Control",
+        fanHint: "Default behavior is low speed in stand mode and medium speed in walk mode. Manual selection overrides that until you switch back to follow mode.",
+        fanRpmHint: "The fan tach signal is read from GPIO5 and displayed here as live RPM.",
+        fanFollowMode: "Follow Mode",
+        fanOff: "Off",
+        fanLow: "Low",
+        fanMedium: "Medium",
+        fanHigh: "High",
+        fanSourceMode: "Mode-linked",
+        fanSourceManual: "Manual",
+        fanLabelMode: "Mode",
+        fanLabelSource: "Source",
+        fanLabelEffective: "Effective",
+        fanLabelManual: "Manual",
+        fanLabelRpm: "RPM",
+        fanLabelTach: "Tach",
+        fanLabelRc: "RC Link",
+        fanLabelHeightGate: "Height Gate",
+        fanRcUp: "Connected",
+        fanRcDown: "Disconnected",
+        fanHeightMin: "Min Height Off",
+        fanHeightFree: "Normal",
+        fanTachReady: "Ready",
+        fanTachMissing: "No signal",
         oledControl: "OLED Display",
         oledHint: "Choose which content the OLED shows before the physical buttons are wired in.",
         oledPageRc: "RC Page",
@@ -876,14 +919,40 @@
         statusActionSentWithName: "Action sent: {action}",
         statusCalibrationStarted: "Calibration pose started",
         statusCalibrationPending: "Value updated locally. Start calibration to apply servo motion.",
-        statusCalibrationSavedAndExited: "Calibration saved and calibration mode exited"
+        statusCalibrationSavedAndExited: "Calibration saved and calibration mode exited",
+        statusFanSaved: "Fan setting applied"
       },
       zh: {
         title: "ScarGo 控制台",
         subtitle: "标定、步态调参与动作测试",
         pageCalibration: "标定",
         pageGait: "步态测试",
+        pageFan: "风扇",
         pageOled: "OLED",
+        fanControl: "风扇控制",
+        fanHint: "默认逻辑是站立低档、行走中档。网页手动选择后会覆盖默认逻辑，直到你切回跟随模式。",
+        fanRpmHint: "风扇测速信号来自 GPIO5，这里会显示实时 RPM。",
+        fanFollowMode: "跟随模式",
+        fanOff: "关闭",
+        fanLow: "低档",
+        fanMedium: "中档",
+        fanHigh: "高档",
+        fanSourceMode: "跟随模式",
+        fanSourceManual: "手动",
+        fanLabelMode: "模式",
+        fanLabelSource: "来源",
+        fanLabelEffective: "当前档位",
+        fanLabelManual: "手动档位",
+        fanLabelRpm: "转速",
+        fanLabelTach: "测速",
+        fanLabelRc: "遥控链路",
+        fanLabelHeightGate: "高度门限",
+        fanRcUp: "已连接",
+        fanRcDown: "未连接",
+        fanHeightMin: "最低高度关闭",
+        fanHeightFree: "正常",
+        fanTachReady: "正常",
+        fanTachMissing: "无信号",
         oledControl: "OLED 显示控制",
         oledHint: "在实体按键接好之前，先在这里选择 OLED 要显示的页面。",
         oledPageRc: "遥控页",
@@ -943,7 +1012,8 @@
         statusActionSentWithName: "动作指令已发送：{action}",
         statusCalibrationStarted: "已进入标定位",
         statusCalibrationPending: "数值已更新到页面，本次还未驱动舵机。点击启动标定后再应用。",
-        statusCalibrationSavedAndExited: "标定已保存，并已退出标定状态"
+        statusCalibrationSavedAndExited: "标定已保存，并已退出标定状态",
+        statusFanSaved: "风扇设置已应用"
       }
     };
 
@@ -972,6 +1042,9 @@
             return;
           case "saved":
             statusKey(fallbackKey || "statusCalibrationSaved");
+            return;
+          case "fan_saved":
+            statusKey(fallbackKey || "statusFanSaved");
             return;
           case "action_queued":
             if (context.actionLabel) {
@@ -1032,9 +1105,11 @@
       activePage = page;
       document.getElementById("page-calibration").classList.toggle("active", page === "calibration");
       document.getElementById("page-gait").classList.toggle("active", page === "gait");
+      document.getElementById("page-fan").classList.toggle("active", page === "fan");
       document.getElementById("page-oled").classList.toggle("active", page === "oled");
       document.getElementById("page-tab-calibration").classList.toggle("active", page === "calibration");
       document.getElementById("page-tab-gait").classList.toggle("active", page === "gait");
+      document.getElementById("page-tab-fan").classList.toggle("active", page === "fan");
       document.getElementById("page-tab-oled").classList.toggle("active", page === "oled");
     }
 
@@ -1316,6 +1391,76 @@
       return labels[view] || view;
     }
 
+    function fanLevelLabel(level) {
+      const labels = {
+        off: t("fanOff"),
+        low: t("fanLow"),
+        medium: t("fanMedium"),
+        high: t("fanHigh"),
+      };
+      return labels[level] || level;
+    }
+
+    function updateFanStatus(data) {
+      currentFanStatus = data || currentFanStatus;
+      if (!currentFanStatus) {
+        return;
+      }
+
+      const manualOverride = !!currentFanStatus.manual_override;
+      const manualLevel = currentFanStatus.manual_level || "low";
+      const effectiveLevel = currentFanStatus.effective_level || "low";
+      const rpm = Number.isFinite(Number(currentFanStatus.rpm)) ? Number(currentFanStatus.rpm) : 0;
+      const mode = currentFanStatus.mode || "stand";
+      const tachReady = !!currentFanStatus.tach_ready;
+      const rcLinkUp = !!currentFanStatus.rc_link_up;
+      const atMinHeight = !!currentFanStatus.at_min_height;
+
+      document.getElementById("fan_status").textContent =
+        `${t("fanLabelMode")}: ${mode === "walk" ? t("walk") : t("stand")}\n` +
+        `${t("fanLabelSource")}: ${manualOverride ? t("fanSourceManual") : t("fanSourceMode")}\n` +
+        `${t("fanLabelEffective")}: ${fanLevelLabel(effectiveLevel)}\n` +
+        `${t("fanLabelManual")}: ${fanLevelLabel(manualLevel)}\n` +
+        `${t("fanLabelRc")}: ${rcLinkUp ? t("fanRcUp") : t("fanRcDown")}\n` +
+        `${t("fanLabelHeightGate")}: ${atMinHeight ? t("fanHeightMin") : t("fanHeightFree")}\n` +
+        `${t("fanLabelRpm")}: ${rpm}\n` +
+        `${t("fanLabelTach")}: ${tachReady ? t("fanTachReady") : t("fanTachMissing")}`;
+
+      ["off", "low", "medium", "high"].forEach((level) => {
+        const el = document.getElementById(`fan-level-${level}`);
+        if (el) {
+          const selected = manualOverride ? manualLevel === level : effectiveLevel === level;
+          el.classList.toggle("active", selected);
+          el.classList.toggle("selected", selected);
+        }
+      });
+      const autoEl = document.getElementById("fan-mode-auto");
+      if (autoEl) {
+        autoEl.classList.toggle("active", !manualOverride);
+        autoEl.classList.toggle("selected", !manualOverride);
+      }
+    }
+
+    function fetchFanStatus() {
+      return fetch("/api/fan")
+        .then((r) => r.json())
+        .then((data) => {
+          updateFanStatus(data);
+        });
+    }
+
+    function setFanLevel(level) {
+      postJson("/api/fan", { level }, "statusFanSaved", {
+        actionLabel: `${currentLang === "zh" ? "风扇" : "Fan"} ${fanLevelLabel(level)}`,
+      }).then(() => fetchFanStatus());
+    }
+
+    function setFanAuto() {
+      postJson("/api/fan", { mode: "auto" }, "statusFanSaved", {
+        actionLabel: currentLang === "zh" ? "风扇跟随模式" : "Fan follow mode",
+      }).then(() => fetchFanStatus());
+    }
+
     function updateOledStatus(page) {
       const labels = {
         rc: t("oledPageRc"),
@@ -1425,6 +1570,16 @@
           currentOledLeg = Number.isFinite(Number(data.oled_leg)) ? Number(data.oled_leg) : currentOledLeg;
           currentOledLegView = data.oled_leg_view || currentOledLegView;
           currentOledRobotView = data.oled_robot_view || currentOledRobotView;
+          updateFanStatus({
+            manual_override: data.fan_manual_override,
+            manual_level: data.fan_manual_level,
+            effective_level: data.fan_effective_level,
+            rc_link_up: data.fan_rc_link_up,
+            at_min_height: data.fan_at_min_height,
+            tach_ready: data.fan_tach_ready,
+            rpm: data.fan_rpm,
+            mode: data.mode,
+          });
           updateOledStatus(data.oled_page || "rc");
         });
     }
@@ -1577,6 +1732,7 @@
         });
 
       refreshStatus();
+      fetchFanStatus();
     }
 
     applyRangeConfig();
