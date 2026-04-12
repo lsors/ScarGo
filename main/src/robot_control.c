@@ -14,7 +14,16 @@ static const char *TAG = "robot";
 static const float SCARGO_LIE_HEIGHT_MM = 92.0f;
 static const float SCARGO_POSTURE_LIFT_MM = 18.0f;
 static const float SCARGO_POSTURE_LIFT_LIE_MM = 10.0f;
-static const float SCARGO_WALK_START_DURATION_S = 0.45f;
+/*
+ * walk 起步/收步参考相位。
+ *
+ * 以当前步态分组定义来看：
+ * - phase = 0.25 时，0/3 腿位于摆动相顶点
+ * - phase = 0.25 时，1/2 腿位于支撑相中点
+ *
+ * 这正好对应我们希望的“独立起步/收步”目标姿态。
+ */
+static const float SCARGO_WALK_REFERENCE_PHASE = 0.25f;
 
 typedef enum {
     ROBOT_POSTURE_STAND = 0,
@@ -91,12 +100,28 @@ static body_pose_t s_calibration_preview_pose;
 static float s_calibration_preview_height_mm;
 static walk_phase_t s_walk_phase = WALK_PHASE_IDLE;
 static float s_walk_phase_progress;
+static float s_walk_steady_phase_origin;
+static float s_walk_display_phase;
+static bool s_walk_stop_pending;
+static vec3f_t s_walk_transition_start_feet_world[SCARGO_LEG_COUNT];
+static vec3f_t s_walk_transition_target_feet_world[SCARGO_LEG_COUNT];
+static body_pose_t s_walk_transition_start_pose;
+static body_pose_t s_walk_transition_target_pose;
+static float s_walk_transition_start_height_mm;
+static float s_walk_transition_target_height_mm;
+static float s_walk_transition_duration_s;
 static float s_roll_integral;
 static float s_pitch_integral;
 static float s_prev_roll_error;
 static float s_prev_pitch_error;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
+/* 根据当前稳态周期相位，判断某条腿处于摆动相还是支撑相。 */
+static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase);
+/* 把 walk 全局状态转换成日志/OLED 统一使用的短字符串。 */
+static const char *walk_status_name(robot_walk_status_t status);
+/* 把单腿状态转换成日志/OLED 统一使用的短字符串。 */
+static const char *walk_leg_state_name(robot_walk_leg_state_t state);
 
 static float clampf_local(float value, float min_value, float max_value)
 {
@@ -209,6 +234,19 @@ static float motion_speed_mm_s(robot_motion_speed_t speed)
     default:
         return 140.0f;
     }
+}
+
+/*
+ * walk 起步/收步都定义成“独立于稳态周期”的过渡过程。
+ *
+ * 用户当前约定：
+ * - 起步：从站立脚点平滑走到稳态周期 phase=0.5 时的脚点
+ * - 收步：从最近一次 phase=0.5 时的脚点平滑收回站立脚点
+ * - 两者时长都取当前周期的四分之一
+ */
+static float walk_transition_duration_s(float cycle_s)
+{
+    return clampf_local(cycle_s * 0.25f, 0.10f, 1.20f);
 }
 
 static float body_angle_speed_deg_s(robot_motion_speed_t speed)
@@ -728,6 +766,71 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
     apply_balance(pose, attitude);
 }
 
+static void begin_walk_start_transition(const rc_command_t *command, const attitude_state_t *attitude, float cycle_s)
+{
+    robot_target_pose_t target = make_target_pose(command, ROBOT_MODE_WALK);
+    body_pose_t target_pose = {
+        .yaw_deg = target.yaw_deg,
+        .pitch_deg = target.pitch_deg,
+        .roll_deg = target.roll_deg,
+    };
+    vec3f_t target_feet_world[SCARGO_LEG_COUNT];
+    float step_height = walk_step_height_from_throttle(command);
+    float stride = step_height * s_config.gait.step_scale;
+
+    copy_feet(s_walk_transition_start_feet_world, s_current_feet_world);
+    s_walk_transition_start_pose = s_current_body_pose;
+    s_walk_transition_start_height_mm = s_current_height_mm;
+
+    /*
+     * 起步目标固定在参考相位：
+     * - 0/3 腿处于摆动顶点
+     * - 1/2 腿处于支撑中点
+     *
+     * 这样起步才会是一个真正可见的“抬脚进入周期”的独立过程。
+     */
+    apply_walk_feet_for_phase(command, attitude, SCARGO_WALK_REFERENCE_PHASE, stride,
+                              target.height_mm, step_height, &target_pose, target_feet_world);
+
+    copy_feet(s_walk_transition_target_feet_world, target_feet_world);
+    s_walk_transition_target_pose = target_pose;
+    s_walk_transition_target_height_mm = target.height_mm;
+    s_walk_transition_duration_s = walk_transition_duration_s(cycle_s);
+    s_walk_phase_progress = 0.0f;
+    s_walk_phase = WALK_PHASE_START;
+    s_walk_steady_phase_origin = SCARGO_WALK_REFERENCE_PHASE;
+    s_walk_stop_pending = false;
+}
+
+static void begin_walk_stop_transition(const rc_command_t *command, const vec3f_t current_feet_world[SCARGO_LEG_COUNT],
+                                       float current_height_mm, const body_pose_t *current_pose, float cycle_s)
+{
+    robot_target_pose_t target = make_target_pose(command, ROBOT_MODE_STAND);
+
+    copy_feet(s_walk_transition_start_feet_world, current_feet_world);
+    s_walk_transition_start_pose = *current_pose;
+    s_walk_transition_start_height_mm = current_height_mm;
+    copy_feet(s_walk_transition_target_feet_world, s_default_feet_world);
+    s_walk_transition_target_pose = (body_pose_t){
+        .yaw_deg = target.yaw_deg,
+        .pitch_deg = target.pitch_deg,
+        .roll_deg = target.roll_deg,
+    };
+    s_walk_transition_target_height_mm = target.height_mm;
+    s_walk_transition_duration_s = walk_transition_duration_s(cycle_s);
+    s_walk_phase_progress = 0.0f;
+    s_walk_phase = WALK_PHASE_STOP;
+    s_walk_stop_pending = false;
+}
+
+static bool phase_crossed_target(float previous_phase, float current_phase, float target_phase)
+{
+    if (current_phase >= previous_phase) {
+        return previous_phase < target_phase && current_phase >= target_phase;
+    }
+    return previous_phase < target_phase || current_phase >= target_phase;
+}
+
 // 行走模式控制。
 //
 // 目前分成 3 段：
@@ -737,6 +840,7 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
 static void apply_walk_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     static uint32_t steady_tick;
+    static float previous_steady_phase = SCARGO_WALK_REFERENCE_PHASE;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
     float step_height = walk_step_height_from_throttle(command);
     float stride = step_height * s_config.gait.step_scale;
@@ -751,38 +855,97 @@ static void apply_walk_pose(const rc_command_t *command, const attitude_state_t 
     vec3f_t feet_world[SCARGO_LEG_COUNT];
     float base_phase = 0.0f;
     float gait_step_height = step_height;
+    bool feet_already_resolved = false;
 
     fill_mid_pose(s_target_angles);
 
     switch (s_walk_phase) {
     case WALK_PHASE_START:
     {
-        s_walk_phase_progress += dt_s / SCARGO_WALK_START_DURATION_S;
+        s_walk_phase_progress += dt_s / fmaxf(s_walk_transition_duration_s, 0.01f);
         float eased = smoothstepf(s_walk_phase_progress);
-        base_phase = 0.25f + 0.25f * eased;
-        stride *= eased;
-        gait_step_height *= eased;
+        copy_feet(feet_world, s_walk_transition_start_feet_world);
+        for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+            feet_world[leg] = lerp_vec3(s_walk_transition_start_feet_world[leg],
+                                        s_walk_transition_target_feet_world[leg],
+                                        eased);
+        }
+        pose.roll_deg = lerpf(s_walk_transition_start_pose.roll_deg, s_walk_transition_target_pose.roll_deg, eased);
+        pose.pitch_deg = lerpf(s_walk_transition_start_pose.pitch_deg, s_walk_transition_target_pose.pitch_deg, eased);
+        pose.yaw_deg = lerpf(s_walk_transition_start_pose.yaw_deg, s_walk_transition_target_pose.yaw_deg, eased);
+        stand_height = lerpf(s_walk_transition_start_height_mm, s_walk_transition_target_height_mm, eased);
+        s_walk_display_phase = SCARGO_WALK_REFERENCE_PHASE * eased;
+        feet_already_resolved = true;
         if (s_walk_phase_progress >= 1.0f) {
-            s_walk_phase = WALK_PHASE_STEADY;
-            s_walk_phase_progress = 0.0f;
-            steady_tick = 0;
+            if (s_walk_stop_pending) {
+                begin_walk_stop_transition(command,
+                                           s_walk_transition_target_feet_world,
+                                           s_walk_transition_target_height_mm,
+                                           &s_walk_transition_target_pose,
+                                           cycle);
+                copy_feet(feet_world, s_walk_transition_start_feet_world);
+                pose = s_walk_transition_start_pose;
+                stand_height = s_walk_transition_start_height_mm;
+            } else {
+                s_walk_phase = WALK_PHASE_STEADY;
+                s_walk_phase_progress = 0.0f;
+                steady_tick = 0;
+                s_walk_steady_phase_origin = SCARGO_WALK_REFERENCE_PHASE;
+                s_walk_display_phase = s_walk_steady_phase_origin;
+                previous_steady_phase = s_walk_steady_phase_origin;
+            }
         }
         break;
     }
     case WALK_PHASE_STOP:
-        base_phase = 0.5f;
+    {
+        s_walk_phase_progress += dt_s / fmaxf(s_walk_transition_duration_s, 0.01f);
+        float eased = smoothstepf(s_walk_phase_progress);
+        copy_feet(feet_world, s_walk_transition_start_feet_world);
+        for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+            feet_world[leg] = lerp_vec3(s_walk_transition_start_feet_world[leg],
+                                        s_walk_transition_target_feet_world[leg],
+                                        eased);
+        }
+        pose.roll_deg = lerpf(s_walk_transition_start_pose.roll_deg, s_walk_transition_target_pose.roll_deg, eased);
+        pose.pitch_deg = lerpf(s_walk_transition_start_pose.pitch_deg, s_walk_transition_target_pose.pitch_deg, eased);
+        pose.yaw_deg = lerpf(s_walk_transition_start_pose.yaw_deg, s_walk_transition_target_pose.yaw_deg, eased);
+        stand_height = lerpf(s_walk_transition_start_height_mm, s_walk_transition_target_height_mm, eased);
+        s_walk_display_phase = SCARGO_WALK_REFERENCE_PHASE;
+        feet_already_resolved = true;
+        if (s_walk_phase_progress >= 1.0f) {
+            s_walk_phase = WALK_PHASE_IDLE;
+            s_walk_phase_progress = 0.0f;
+            s_mode = ROBOT_MODE_STAND;
+            copy_feet(s_current_feet_world, s_walk_transition_target_feet_world);
+            s_current_body_pose = s_walk_transition_target_pose;
+            s_current_height_mm = s_walk_transition_target_height_mm;
+        }
         break;
+    }
     case WALK_PHASE_STEADY:
         steady_tick++;
-        base_phase = fmodf(((float)(steady_tick) * dt_s) / cycle, 1.0f);
+        base_phase = fmodf(s_walk_steady_phase_origin + (((float)(steady_tick) * dt_s) / cycle), 1.0f);
+        s_walk_display_phase = base_phase;
+        if (s_walk_stop_pending && phase_crossed_target(previous_steady_phase, base_phase, SCARGO_WALK_REFERENCE_PHASE)) {
+            apply_walk_feet_for_phase(command, attitude, base_phase, stride, stand_height, gait_step_height, &pose, feet_world);
+            begin_walk_stop_transition(command, feet_world, stand_height, &pose, cycle);
+            previous_steady_phase = base_phase;
+            feet_already_resolved = true;
+            break;
+        }
+        previous_steady_phase = base_phase;
         break;
     case WALK_PHASE_IDLE:
     default:
         base_phase = 0.0f;
+        s_walk_display_phase = 0.0f;
         break;
     }
 
-    apply_walk_feet_for_phase(command, attitude, base_phase, stride, stand_height, gait_step_height, &pose, feet_world);
+    if (!feet_already_resolved) {
+        apply_walk_feet_for_phase(command, attitude, base_phase, stride, stand_height, gait_step_height, &pose, feet_world);
+    }
     copy_feet(s_current_feet_world, feet_world);
     s_current_height_mm = stand_height;
     s_current_body_pose = pose;
@@ -822,6 +985,7 @@ void robot_control_init(const system_config_t *config)
                              &(body_pose_t){0},
                              SCARGO_POSTURE_LIFT_MM * 0.5f);
     s_mode = ROBOT_MODE_STAND;
+    s_walk_display_phase = 0.0f;
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &s_current_body_pose);
     log_mid_pose_forward_kinematics();
     ESP_LOGI(TAG, "Robot control initialized");
@@ -880,6 +1044,52 @@ bool robot_control_is_calibration_mode_active(void)
     return s_calibration_mode_active;
 }
 
+static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase)
+{
+    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_RIGHT) ? 0.0f : 0.5f);
+    if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
+        group_phase += s_config.gait.diagonal_phase_offset;
+    }
+    group_phase = fmodf(group_phase, 1.0f);
+    if (group_phase < 0.0f) {
+        group_phase += 1.0f;
+    }
+    return (group_phase >= s_config.gait.stance_ratio) ? ROBOT_WALK_LEG_STATE_SWING
+                                                       : ROBOT_WALK_LEG_STATE_SUPPORT;
+}
+
+static const char *walk_status_name(robot_walk_status_t status)
+{
+    switch (status) {
+    case ROBOT_WALK_STATUS_START:
+        return "start";
+    case ROBOT_WALK_STATUS_STEADY:
+        return "steady";
+    case ROBOT_WALK_STATUS_STOP:
+        return "stop";
+    case ROBOT_WALK_STATUS_IDLE:
+    default:
+        return "idle";
+    }
+}
+
+static const char *walk_leg_state_name(robot_walk_leg_state_t state)
+{
+    switch (state) {
+    case ROBOT_WALK_LEG_STATE_START:
+        return "start";
+    case ROBOT_WALK_LEG_STATE_SWING:
+        return "swing";
+    case ROBOT_WALK_LEG_STATE_SUPPORT:
+        return "support";
+    case ROBOT_WALK_LEG_STATE_STOP:
+        return "stop";
+    case ROBOT_WALK_LEG_STATE_IDLE:
+    default:
+        return "idle";
+    }
+}
+
 bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JOINTS_PER_LEG])
 {
     if (out_angles_deg == NULL || leg < 0 || leg >= SCARGO_LEG_COUNT) {
@@ -909,6 +1119,55 @@ body_pose_t robot_control_get_current_body_pose(void)
 float robot_control_get_current_height_mm(void)
 {
     return s_current_height_mm;
+}
+
+robot_walk_status_t robot_control_get_walk_status(void)
+{
+    switch (s_walk_phase) {
+    case WALK_PHASE_START:
+        return ROBOT_WALK_STATUS_START;
+    case WALK_PHASE_STEADY:
+        return ROBOT_WALK_STATUS_STEADY;
+    case WALK_PHASE_STOP:
+        return ROBOT_WALK_STATUS_STOP;
+    case WALK_PHASE_IDLE:
+    default:
+        return ROBOT_WALK_STATUS_IDLE;
+    }
+}
+
+float robot_control_get_walk_phase_value(void)
+{
+    return s_walk_display_phase;
+}
+
+bool robot_control_get_walk_leg_states(robot_walk_leg_state_t out_states[SCARGO_LEG_COUNT])
+{
+    robot_walk_status_t status;
+
+    if (out_states == NULL) {
+        return false;
+    }
+
+    status = robot_control_get_walk_status();
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        switch (status) {
+        case ROBOT_WALK_STATUS_START:
+            out_states[leg] = ROBOT_WALK_LEG_STATE_START;
+            break;
+        case ROBOT_WALK_STATUS_STOP:
+            out_states[leg] = ROBOT_WALK_LEG_STATE_STOP;
+            break;
+        case ROBOT_WALK_STATUS_STEADY:
+            out_states[leg] = walk_leg_state_for_phase(leg, s_walk_display_phase);
+            break;
+        case ROBOT_WALK_STATUS_IDLE:
+        default:
+            out_states[leg] = ROBOT_WALK_LEG_STATE_IDLE;
+            break;
+        }
+    }
+    return true;
 }
 
 robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
@@ -1073,7 +1332,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             s_mode = ROBOT_MODE_WALK;
             if (s_walk_phase == WALK_PHASE_IDLE || s_walk_phase == WALK_PHASE_STOP) {
                 s_walk_phase = WALK_PHASE_START;
-                s_walk_phase_progress = 0.0f;
+                begin_walk_start_transition(command, attitude, fmaxf(gait_cycle_effective_ms(command) / 1000.0f, 0.15f));
             }
             break;
         case ROBOT_ACTION_LIE_DOWN:
@@ -1103,24 +1362,20 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         }
         s_mode = ROBOT_MODE_WALK;
         if (s_walk_phase == WALK_PHASE_IDLE) {
-            s_walk_phase = WALK_PHASE_START;
-            s_walk_phase_progress = 0.0f;
+            begin_walk_start_transition(command, attitude, fmaxf(gait_cycle_effective_ms(command) / 1000.0f, 0.15f));
         }
     }
     if (!command->walk_mode && s_mode == ROBOT_MODE_WALK &&
         (s_walk_phase == WALK_PHASE_STEADY || s_walk_phase == WALK_PHASE_START)) {
-        s_walk_phase = WALK_PHASE_IDLE;
-        s_walk_phase_progress = 0.0f;
-        begin_posture_transition(ROBOT_POSTURE_STAND,
-                                 body_height_from_throttle(command),
-                                 s_default_feet_world,
-                                 &(body_pose_t){
-                                     .yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg,
-                                     .pitch_deg = command->roll * s_config.gait.max_body_roll_deg,
-                                     .roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg,
-                                 },
-                                 SCARGO_POSTURE_LIFT_MM * 0.5f);
-        s_mode = ROBOT_MODE_STAND;
+        if (s_walk_phase == WALK_PHASE_START) {
+            /*
+             * 如果在起步阶段就要求停止，由于起步本身就是朝 phase=0.5 收敛，
+             * 允许它先完成这一小段，再在下一个 tick 进入独立收步。
+             */
+            s_walk_stop_pending = true;
+        } else {
+            s_walk_stop_pending = true;
+        }
     }
 
     if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active && s_mode == ROBOT_MODE_STAND) {
@@ -1144,6 +1399,25 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
                  attitude->roll_deg,
                  attitude->pitch_deg,
                  attitude->yaw_deg);
+        if (s_mode == ROBOT_MODE_WALK || s_walk_phase != WALK_PHASE_IDLE) {
+            robot_walk_leg_state_t leg_states[SCARGO_LEG_COUNT];
+            if (robot_control_get_walk_leg_states(leg_states)) {
+                ESP_LOGI(TAG,
+                         "walk dbg status=%s phase=%.2f leg0=%s leg1=%s leg2=%s leg3=%s",
+                         walk_status_name(robot_control_get_walk_status()),
+                         robot_control_get_walk_phase_value(),
+                         walk_leg_state_name(leg_states[0]),
+                         walk_leg_state_name(leg_states[1]),
+                         walk_leg_state_name(leg_states[2]),
+                         walk_leg_state_name(leg_states[3]));
+                ESP_LOGI(TAG,
+                         "walk dbg dz leg0=%.1f leg1=%.1f leg2=%.1f leg3=%.1f",
+                         (double)(s_current_feet_world[0].z_mm - s_default_feet_world[0].z_mm),
+                         (double)(s_current_feet_world[1].z_mm - s_default_feet_world[1].z_mm),
+                         (double)(s_current_feet_world[2].z_mm - s_default_feet_world[2].z_mm),
+                         (double)(s_current_feet_world[3].z_mm - s_default_feet_world[3].z_mm));
+            }
+        }
     }
 
     s_last_aux_sa = command->aux_sa;

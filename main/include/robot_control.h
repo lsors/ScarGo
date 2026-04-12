@@ -29,6 +29,21 @@ typedef enum {
     ROBOT_MOTION_SPEED_FAST = 2,
 } robot_motion_speed_t;
 
+typedef enum {
+    ROBOT_WALK_STATUS_IDLE = 0,
+    ROBOT_WALK_STATUS_START,
+    ROBOT_WALK_STATUS_STEADY,
+    ROBOT_WALK_STATUS_STOP,
+} robot_walk_status_t;
+
+typedef enum {
+    ROBOT_WALK_LEG_STATE_IDLE = 0,
+    ROBOT_WALK_LEG_STATE_START,
+    ROBOT_WALK_LEG_STATE_SWING,
+    ROBOT_WALK_LEG_STATE_SUPPORT,
+    ROBOT_WALK_LEG_STATE_STOP,
+} robot_walk_leg_state_t;
+
 typedef struct {
     float roll_deg;
     float pitch_deg;
@@ -78,3 +93,22 @@ bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JO
 bool robot_control_get_current_feet_world(vec3f_t out_feet_world[SCARGO_LEG_COUNT]);
 body_pose_t robot_control_get_current_body_pose(void);
 float robot_control_get_current_height_mm(void);
+/*
+ * Walk 调试接口
+ * ==============
+ *
+ * 这组接口专门给 OLED 和调试日志使用，用来统一读取当前步态状态。
+ * 它们只暴露“状态观察值”，不参与控制决策。
+ *
+ * - status       : start / steady / stop / idle
+ * - phase        : 当前稳态周期相位，范围 [0, 1)
+ * - leg states   : 每条腿当前属于 start / swing / support / stop
+ *
+ * 这样可以保证：
+ * - OLED 下方状态显示
+ * - 串口慢速调试日志
+ * 使用的是同一份状态语义，不会再次出现两边各自推断导致的不一致。
+ */
+robot_walk_status_t robot_control_get_walk_status(void);
+float robot_control_get_walk_phase_value(void);
+bool robot_control_get_walk_leg_states(robot_walk_leg_state_t out_states[SCARGO_LEG_COUNT]);

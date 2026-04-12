@@ -31,6 +31,7 @@ static bool s_ready;
 static uint8_t s_buffer[128 * 8];
 static uint16_t s_oled_addr;
 static TickType_t s_boot_splash_deadline;
+static uint32_t s_display_debug_tick;
 
 typedef enum {
     DISPLAY_LAYOUT_LANDSCAPE = 0,
@@ -713,7 +714,13 @@ static void render_leg_preview_page(void)
     display_layout_draw_title(layout, title_left, title_top, label);
 }
 
-static bool compute_leg_model_points(int leg, float points[4][3])
+/*
+ * 计算整机预览里某条腿的 4 个链点。
+ *
+ * 如果调用者需要继续分析安装层姿态，可以通过 out_joint_pose 取回当前这条腿
+ * 在预览链里解出的 shoulder / alpha / beta。
+ */
+static bool compute_leg_model_points(int leg, float points[4][3], leg_joint_pose_t *out_joint_pose)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     vec3f_t chain_points[4];
@@ -732,6 +739,9 @@ static bool compute_leg_model_points(int leg, float points[4][3])
     if (!kinematics_solve_leg_installation_pose((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
         !kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)leg, &joint_pose, chain_points)) {
         return false;
+    }
+    if (out_joint_pose != NULL) {
+        *out_joint_pose = joint_pose;
     }
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
@@ -762,12 +772,14 @@ static void render_robot_preview_page(void)
     float leg_points_3d[SCARGO_LEG_COUNT][4][3];
     float leg_projected[SCARGO_LEG_COUNT][4][2];
     int leg_points[SCARGO_LEG_COUNT][4][2];
+    leg_joint_pose_t leg_joint_poses[SCARGO_LEG_COUNT];
     float min_x = 9999.0f;
     float max_x = -9999.0f;
     float min_y = 9999.0f;
     float max_y = -9999.0f;
     float front_arrow[4][2];
     int front_arrow_points[4][2];
+    robot_walk_leg_state_t walk_leg_states[SCARGO_LEG_COUNT];
     const int region_x = 0;
     const int region_y = 0;
     const int region_w = 128;
@@ -775,6 +787,7 @@ static void render_robot_preview_page(void)
     const float margin = 2.0f;
 
     oled_clear();
+    robot_control_get_walk_leg_states(walk_leg_states);
 
     for (int i = 0; i < 4; ++i) {
         project_preview_point(body[i][0], body[i][1], body[i][2], s_robot_preview_view,
@@ -807,7 +820,7 @@ static void render_robot_preview_page(void)
     }
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        if (!compute_leg_model_points(leg, leg_points_3d[leg])) {
+        if (!compute_leg_model_points(leg, leg_points_3d[leg], &leg_joint_poses[leg])) {
             return;
         }
         for (int joint = 0; joint < 4; ++joint) {
@@ -860,6 +873,56 @@ static void render_robot_preview_page(void)
         oled_draw_line(leg_points[leg][0][0], leg_points[leg][0][1], leg_points[leg][1][0], leg_points[leg][1][1]);
         oled_draw_line(leg_points[leg][1][0], leg_points[leg][1][1], leg_points[leg][2][0], leg_points[leg][2][1]);
         oled_draw_line(leg_points[leg][2][0], leg_points[leg][2][1], leg_points[leg][3][0], leg_points[leg][3][1]);
+        if (walk_leg_states[leg] == ROBOT_WALK_LEG_STATE_SWING) {
+            int marker_x = leg_points[leg][0][0] + 3;
+            int marker_y = leg_points[leg][0][1] - 4;
+            if (marker_x > 122) {
+                marker_x = 122;
+            }
+            if (marker_y < 0) {
+                marker_y = 0;
+            }
+            oled_draw_text(marker_x, marker_y / 8, "S");
+        }
+    }
+
+    if ((s_display_debug_tick % 60U) == 0U) {
+        ESP_LOGI(TAG,
+                 "preview dbg leg0_z=%.1f leg1_z=%.1f leg2_z=%.1f leg3_z=%.1f state0=%d state1=%d state2=%d state3=%d",
+                 (double)leg_points_3d[0][3][2],
+                 (double)leg_points_3d[1][3][2],
+                 (double)leg_points_3d[2][3][2],
+                 (double)leg_points_3d[3][3][2],
+                 walk_leg_states[0],
+                 walk_leg_states[1],
+                 walk_leg_states[2],
+                 walk_leg_states[3]);
+        ESP_LOGI(TAG,
+                 "preview pose a/b leg0=%.1f/%.1f leg1=%.1f/%.1f leg2=%.1f/%.1f leg3=%.1f/%.1f",
+                 (double)leg_joint_poses[0].thigh_deg, (double)leg_joint_poses[0].beta_deg,
+                 (double)leg_joint_poses[1].thigh_deg, (double)leg_joint_poses[1].beta_deg,
+                 (double)leg_joint_poses[2].thigh_deg, (double)leg_joint_poses[2].beta_deg,
+                 (double)leg_joint_poses[3].thigh_deg, (double)leg_joint_poses[3].beta_deg);
+    }
+
+    {
+        robot_walk_status_t walk_status = robot_control_get_walk_status();
+        char phase_text[16];
+        switch (walk_status) {
+        case ROBOT_WALK_STATUS_START:
+            oled_draw_text(0, 7, "START");
+            break;
+        case ROBOT_WALK_STATUS_STOP:
+            oled_draw_text(104, 7, "STOP");
+            break;
+        case ROBOT_WALK_STATUS_STEADY:
+            snprintf(phase_text, sizeof(phase_text), "%.2f", (double)robot_control_get_walk_phase_value());
+            oled_draw_text((128 - (int)strlen(phase_text) * 6) / 2, 7, phase_text);
+            break;
+        case ROBOT_WALK_STATUS_IDLE:
+        default:
+            break;
+        }
     }
 }
 
@@ -946,6 +1009,7 @@ void display_service_tick(void)
         return;
     }
 
+    ++s_display_debug_tick;
     handle_buttons();
     if (xTaskGetTickCount() < s_boot_splash_deadline) {
         render_boot_splash();
