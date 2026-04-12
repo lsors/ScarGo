@@ -18,12 +18,12 @@ static const float SCARGO_POSTURE_LIFT_LIE_MM = 10.0f;
  * walk 起步/收步参考相位。
  *
  * 以当前步态分组定义来看：
- * - phase = 0.25 时，0/3 腿位于摆动相顶点
- * - phase = 0.25 时，1/2 腿位于支撑相中点
+ * - phase = 0.75 时，0/3 腿位于摆动相顶点
+ * - phase = 0.75 时，1/2 腿位于支撑相中点
  *
  * 这正好对应我们希望的“独立起步/收步”目标姿态。
  */
-static const float SCARGO_WALK_REFERENCE_PHASE = 0.25f;
+static const float SCARGO_WALK_REFERENCE_PHASE = 0.75f;
 
 typedef enum {
     ROBOT_POSTURE_STAND = 0,
@@ -739,11 +739,19 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
     const float yaw_diff_y = clampf_local(command->yaw, -1.0f, 1.0f) * stride * 0.5f;
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        float group_phase = phase + ((leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_RIGHT) ? 0.0f : 0.5f);
+        /*
+         * 对角腿组相位：
+         * - 0/3（右前/左后）作为主相位组
+         * - 1/2（左前/右后）相对其滞后半个周期
+         */
+        float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
         if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
             group_phase += s_config.gait.diagonal_phase_offset;
         }
         group_phase = fmodf(group_phase, 1.0f);
+        if (group_phase < 0.0f) {
+            group_phase += 1.0f;
+        }
 
         bool in_swing = group_phase >= s_config.gait.stance_ratio;
         float phase_local;
@@ -1046,7 +1054,7 @@ bool robot_control_is_calibration_mode_active(void)
 
 static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase)
 {
-    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_LEFT || leg == SCARGO_LEG_REAR_RIGHT) ? 0.0f : 0.5f);
+    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
     if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
         group_phase += s_config.gait.diagonal_phase_offset;
     }

@@ -587,6 +587,8 @@ static void render_leg_preview_page(void)
     vec3f_t feet_world[SCARGO_LEG_COUNT];
     vec3f_t feet_body[SCARGO_LEG_COUNT];
     leg_joint_pose_t joint_pose;
+    body_pose_t pose;
+    float stand_height_mm;
     float projected_float[4][2];
     int projected[4][2];
     /*
@@ -609,6 +611,8 @@ static void render_leg_preview_page(void)
         oled_draw_text(26, 5, "NO DATA");
         return;
     }
+    pose = robot_control_get_current_body_pose();
+    stand_height_mm = robot_control_get_current_height_mm();
     /*
      * ====================
      * 第三层：预览显示层
@@ -628,8 +632,7 @@ static void render_leg_preview_page(void)
      * 因为这个页面要表达的是“当前控制目标在安装语义下长什么样”，
      * 而不是“PCA9685 最终打给舵机的电角度”。
      */
-    body_pose_t pose = robot_control_get_current_body_pose();
-    kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
+    kinematics_apply_body_pose(feet_body, feet_world, stand_height_mm, &pose);
     if (!kinematics_solve_leg_installation_pose((scargo_leg_id_t)s_leg_preview_selection,
                                                 &feet_body[s_leg_preview_selection],
                                                 &joint_pose) ||
@@ -720,22 +723,22 @@ static void render_leg_preview_page(void)
  * 如果调用者需要继续分析安装层姿态，可以通过 out_joint_pose 取回当前这条腿
  * 在预览链里解出的 shoulder / alpha / beta。
  */
-static bool compute_leg_model_points(int leg, float points[4][3], leg_joint_pose_t *out_joint_pose)
+static bool compute_leg_model_points(int leg,
+                                     const vec3f_t feet_world[SCARGO_LEG_COUNT],
+                                     float stand_height_mm,
+                                     const body_pose_t *pose,
+                                     float points[4][3],
+                                     leg_joint_pose_t *out_joint_pose)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     vec3f_t chain_points[4];
-    vec3f_t feet_world[SCARGO_LEG_COUNT];
     vec3f_t feet_body[SCARGO_LEG_COUNT];
     leg_joint_pose_t joint_pose;
-    if (!robot_control_get_current_feet_world(feet_world)) {
-        return false;
-    }
     /*
      * 整机实时页与单腿实时页必须使用同一条“安装层预览链”。
      * 这里不允许额外混入任何舵机层补偿，否则单腿页和整机页就会分叉。
      */
-    body_pose_t pose = robot_control_get_current_body_pose();
-    kinematics_apply_body_pose(feet_body, feet_world, robot_control_get_current_height_mm(), &pose);
+    kinematics_apply_body_pose(feet_body, feet_world, stand_height_mm, pose);
     if (!kinematics_solve_leg_installation_pose((scargo_leg_id_t)leg, &feet_body[leg], &joint_pose) ||
         !kinematics_compute_leg_chain_from_installation_pose((scargo_leg_id_t)leg, &joint_pose, chain_points)) {
         return false;
@@ -773,6 +776,9 @@ static void render_robot_preview_page(void)
     float leg_projected[SCARGO_LEG_COUNT][4][2];
     int leg_points[SCARGO_LEG_COUNT][4][2];
     leg_joint_pose_t leg_joint_poses[SCARGO_LEG_COUNT];
+    vec3f_t feet_world[SCARGO_LEG_COUNT];
+    body_pose_t pose;
+    float stand_height_mm;
     float min_x = 9999.0f;
     float max_x = -9999.0f;
     float min_y = 9999.0f;
@@ -787,6 +793,13 @@ static void render_robot_preview_page(void)
     const float margin = 2.0f;
 
     oled_clear();
+    if (!robot_control_get_current_feet_world(feet_world)) {
+        oled_draw_text(18, 3, "ROBOT PREVIEW");
+        oled_draw_text(26, 5, "NO DATA");
+        return;
+    }
+    pose = robot_control_get_current_body_pose();
+    stand_height_mm = robot_control_get_current_height_mm();
     robot_control_get_walk_leg_states(walk_leg_states);
 
     for (int i = 0; i < 4; ++i) {
@@ -820,7 +833,8 @@ static void render_robot_preview_page(void)
     }
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        if (!compute_leg_model_points(leg, leg_points_3d[leg], &leg_joint_poses[leg])) {
+        if (!compute_leg_model_points(leg, feet_world, stand_height_mm, &pose,
+                                      leg_points_3d[leg], &leg_joint_poses[leg])) {
             return;
         }
         for (int joint = 0; joint < 4; ++joint) {

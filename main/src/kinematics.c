@@ -45,6 +45,20 @@ static float clampf(float value, float min_value, float max_value)
     return value;
 }
 
+/*
+ * 按当前新的层次定义：
+ * - 纯几何层里的 beta：保持标准二连杆数学语义
+ * - 安装层里的 beta：只额外体现“小腿零位是与大腿垂直并向前伸”
+ *
+ * 因此安装层并不重定义大腿 alpha，只对小腿 beta 的零位语义做一次转换。
+ * 两者互为补角：
+ *   beta_install = 180 - beta_geometry
+ */
+static float geometry_beta_to_installation_beta(float beta_geometry_deg)
+{
+    return 180.0f - beta_geometry_deg;
+}
+
 static vec3f_t rotate_x(vec3f_t input, float radians)
 {
     const float c = cosf(radians);
@@ -349,51 +363,33 @@ bool kinematics_compute_leg_chain(scargo_leg_id_t leg, const leg_servo_pose_t *p
 
 bool kinematics_solve_leg_installation_pose(scargo_leg_id_t leg, const vec3f_t *foot_body, leg_joint_pose_t *out_pose)
 {
-    const scargo_mechanics_t *mech = board_defaults_mechanics();
+    leg_joint_pose_t geometry_pose;
+
     if (out_pose == NULL || foot_body == NULL) {
         return false;
     }
 
-    const float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
-    const float lateral = side_sign * foot_body->x_mm;
-    const float forward = foot_body->y_mm;
-    const float vertical = foot_body->z_mm;
-    const float radial = sqrtf(lateral * lateral + vertical * vertical);
-    if (radial <= mech->shoulder_length_mm + 1.0f) {
-        return false;
-    }
-
-    const float planar_vertical =
-        -sqrtf(fmaxf(radial * radial - mech->shoulder_length_mm * mech->shoulder_length_mm, 0.0f));
-    const float shoulder_deg = rad2deg(atan2f(vertical, lateral) - atan2f(planar_vertical, mech->shoulder_length_mm));
-
-    const float distance = sqrtf(forward * forward + planar_vertical * planar_vertical);
-    if (distance < 1.0f || distance > (mech->thigh_length_mm + mech->calf_length_mm)) {
-        return false;
-    }
-
     /*
-     * 安装层采用“大夹角 beta”语义。
-     * 这是 OLED/整机预览当前已验证正确的安装解释：
-     * - beta 表示大腿延长线和小腿之间的夹角
-     * - 它与真实舵机层里的 beta 语义不完全等同，因此不能直接复用主逆解结果
+     * 安装层不再自己维护第二套逆解。
+     *
+     * 先统一走纯几何层求出：
+     * - shoulder
+     * - alpha
+     * - beta_geometry
+     *
+     * 然后只对小腿 beta 做一次安装零位语义转换：
+     * - 纯几何层：标准二连杆 beta
+     * - 安装层  ：小腿与大腿垂直前伸为中位参考
+     *
+     * 这样“安装层只额外处理小腿零位”的边界就明确了，
+     * 同时也避免几何层/安装层各写一套近似逆解，后面再慢慢漂移。
      */
-    const float beta_cos =
-        clampf((mech->thigh_length_mm * mech->thigh_length_mm +
-                mech->calf_length_mm * mech->calf_length_mm -
-                distance * distance) /
-                   (2.0f * mech->thigh_length_mm * mech->calf_length_mm),
-               -1.0f, 1.0f);
-    const float beta_deg = rad2deg(acosf(beta_cos));
+    if (!kinematics_solve_leg_geometry(leg, foot_body, &geometry_pose)) {
+        return false;
+    }
 
-    const float alpha_deg =
-        rad2deg(atan2f(forward, -planar_vertical) -
-                atan2f(mech->calf_length_mm * sinf(deg2rad(beta_deg)),
-                       mech->thigh_length_mm - mech->calf_length_mm * cosf(deg2rad(beta_deg))));
-
-    out_pose->shoulder_deg = shoulder_deg;
-    out_pose->thigh_deg = alpha_deg;
-    out_pose->beta_deg = beta_deg;
+    *out_pose = geometry_pose;
+    out_pose->beta_deg = geometry_beta_to_installation_beta(geometry_pose.beta_deg);
     return true;
 }
 
@@ -401,34 +397,50 @@ bool kinematics_compute_leg_chain_from_installation_pose(scargo_leg_id_t leg, co
                                                          vec3f_t out_points[4])
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
+    const float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
+    const float shoulder = deg2rad(-joint_pose->shoulder_deg);
+    const float alpha = deg2rad(joint_pose->thigh_deg);
+    const float beta_install = deg2rad(joint_pose->beta_deg);
+    const float knee_y = mech->thigh_length_mm * sinf(alpha);
+    const float knee_z = -mech->thigh_length_mm * cosf(alpha);
+    float calf_dir;
+    float foot_y;
+    float foot_z;
+    float shoulder_x;
+    float shoulder_z;
+    float knee_x;
+    float knee_world_z;
+    float foot_x;
+    float foot_world_z;
+
     if (joint_pose == NULL || out_points == NULL) {
         return false;
     }
 
     /*
-     * 安装层链点保留 OLED 已验证正确的几何构造：
-     * - alpha 控制大腿段
-     * - beta 为大夹角
-     * - 小腿方向按 alpha + PI - beta 构造
+     * 这里不能简单把安装层 beta 再转换回几何层 beta，
+     * 然后直接复用 kinematics_compute_leg_chain_from_joint()。
      *
-     * 这里故意不复用舵机层那套链点，因为舵机层当前还带有真实机械修正语义。
+     * 原因是安装层 beta 的语义是：
+     * - 小腿零位与大腿垂直并向前伸
+     *
+     * 在这个语义下，小腿绝对方向应当按：
+     *   calf_dir = alpha + PI - beta_install
+     *
+     * 这正是之前预览链里已经被验证过的正确构造。
+     * 因此安装层链点仍然需要保留这一条专属的小腿方向公式；
+     * 它只是在“链点构造”这一步专属，并不意味着安装层重新维护一套逆解。
      */
-    const float shoulder = deg2rad(-joint_pose->shoulder_deg);
-    const float alpha = deg2rad(joint_pose->thigh_deg);
-    const float beta = deg2rad(joint_pose->beta_deg);
+    calf_dir = alpha + (float)M_PI - beta_install;
+    foot_y = knee_y + mech->calf_length_mm * sinf(calf_dir);
+    foot_z = knee_z - mech->calf_length_mm * cosf(calf_dir);
 
-    const float knee_y = mech->thigh_length_mm * sinf(alpha);
-    const float knee_z = -mech->thigh_length_mm * cosf(alpha);
-    const float foot_y = knee_y + mech->calf_length_mm * sinf(alpha + (float)M_PI - beta);
-    const float foot_z = knee_z - mech->calf_length_mm * cosf(alpha + (float)M_PI - beta);
-
-    const float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
-    const float shoulder_x = side_sign * mech->shoulder_length_mm * cosf(shoulder);
-    const float shoulder_z = -mech->shoulder_length_mm * sinf(shoulder);
-    const float knee_x = side_sign * (mech->shoulder_length_mm * cosf(shoulder) + knee_z * sinf(shoulder));
-    const float knee_world_z = -mech->shoulder_length_mm * sinf(shoulder) + knee_z * cosf(shoulder);
-    const float foot_x = side_sign * (mech->shoulder_length_mm * cosf(shoulder) + foot_z * sinf(shoulder));
-    const float foot_world_z = -mech->shoulder_length_mm * sinf(shoulder) + foot_z * cosf(shoulder);
+    shoulder_x = side_sign * mech->shoulder_length_mm * cosf(shoulder);
+    shoulder_z = -mech->shoulder_length_mm * sinf(shoulder);
+    knee_x = side_sign * (mech->shoulder_length_mm * cosf(shoulder) + knee_z * sinf(shoulder));
+    knee_world_z = -mech->shoulder_length_mm * sinf(shoulder) + knee_z * cosf(shoulder);
+    foot_x = side_sign * (mech->shoulder_length_mm * cosf(shoulder) + foot_z * sinf(shoulder));
+    foot_world_z = -mech->shoulder_length_mm * sinf(shoulder) + foot_z * cosf(shoulder);
 
     out_points[0] = (vec3f_t){.x_mm = 0.0f, .y_mm = 0.0f, .z_mm = 0.0f};
     out_points[1] = (vec3f_t){.x_mm = shoulder_x, .y_mm = 0.0f, .z_mm = shoulder_z};

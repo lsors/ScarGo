@@ -15,11 +15,14 @@
  *    - 不包含：安装零位、镜像、SERVO_MAP、标定偏置、PCA9685 通道
  *
  * 2. 安装层（Installation Layer）
- *    - 把纯几何层结果翻译成“当前这套机械安装语义”
+ *    - 在纯几何层之上，只额外体现“当前这套小腿安装零位语义”
  *    - 这一层服务于：
  *      - OLED / Web 预览
  *      - 真实舵机层前的安装解释
  *    - 这里不进入真实舵机电角度细节
+ *    - 当前约定下：
+ *      - 大腿向下 与 纯几何层一致
+ *      - 只有小腿“与大腿垂直并向前伸”的零位语义在这里体现
  *
  * 3. 舵机层（Servo Layer）
  *    - 在安装层之上，进一步处理真实执行映射
@@ -105,6 +108,10 @@ bool kinematics_servo_to_joint(scargo_leg_id_t leg, const leg_servo_pose_t *serv
 
 // 机械关节角 -> 舵机角。
 // 与 kinematics_servo_to_joint() 成对，供逆解完成后把 joint pose 再翻译回舵机层。
+//
+// 注意：
+// - 大腿向下这一语义本来就和纯几何层一致
+// - 因此安装层真正额外处理的重点主要在小腿 beta 的安装零位转换
 bool kinematics_joint_to_servo(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose, leg_servo_pose_t *servo_pose);
 
 // 仅做几何层求解：从足端点直接求出 shoulder / thigh / beta，不翻译回舵机角。
@@ -139,7 +146,7 @@ bool kinematics_compute_leg_chain_from_joint(scargo_leg_id_t leg, const leg_join
  *   “理想数学模型的腿长什么样”
  *
  * 而是：
- *   “在 ScarGo 当前安装定义下，这条腿应该长什么样”
+ *   “在 ScarGo 当前小腿安装零位定义下，这条腿应该长什么样”
  *
  * 因此：
  * - 不直接进入真实舵机电角度
