@@ -150,6 +150,8 @@ static void consume_uart_bytes(const uint8_t *buffer, int length)
             continue;
         }
 
+        /* frame_size 已通过 [2, CRSF_FRAME_MAX-2] 校验，index < length <= 128，
+         * 三者之和不超过 192，int 范围内无溢出风险。 */
         int frame_end = index + 2 + frame_size;
         if (frame_end > length) {
             break;
@@ -197,7 +199,9 @@ void rc_input_tick(void)
 
     uint8_t buffer[128];
     int length = uart_read_bytes(UART_NUM_1, buffer, sizeof(buffer), 0);
-    if (length > 0) {
+    if (length < 0) {
+        ESP_LOGW(TAG, "UART read error: %d", length);
+    } else if (length > 0) {
         consume_uart_bytes(buffer, length);
     }
 

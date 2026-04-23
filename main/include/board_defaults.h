@@ -38,6 +38,8 @@
 #define SCARGO_CPU_FREQ_MHZ 240
 #define SCARGO_WIFI_AP_SSID "ScarGo-Calib"
 #define SCARGO_WIFI_AP_PASSWORD "scargo123"
+/* Base64 of "admin:scargo123" — update if SCARGO_WIFI_AP_PASSWORD changes */
+#define SCARGO_API_AUTH_EXPECTED "Basic YWRtaW46c2NhcmdvMTIz"
 
 #define SCARGO_CRSF_UART_BAUD 420000
 #define SCARGO_CRSF_MIN_VALUE 172

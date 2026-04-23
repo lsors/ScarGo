@@ -798,6 +798,7 @@
   </main>
 
   <script>
+    const API_AUTH = "Basic YWRtaW46c2NhcmdvMTIz";
     let calibrationData = { legs: [] };
     let activeLeg = 0;
     let currentLang = "en";
@@ -1064,7 +1065,7 @@
     function postJson(url, payload, successKey, context = {}) {
       return fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": API_AUTH },
         body: JSON.stringify(payload),
       })
         .then((r) => r.text().then((text) => ({ ok: r.ok, text })))
@@ -1299,7 +1300,7 @@
       refreshCalibrationControls();
       fetch("/api/calibration/start", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": API_AUTH },
         body: JSON.stringify(calibrationData),
       })
         .then((r) => r.text().then((text) => ({ ok: r.ok, text })))

@@ -396,6 +396,10 @@ bool kinematics_solve_leg_installation_pose(scargo_leg_id_t leg, const vec3f_t *
 bool kinematics_compute_leg_chain_from_installation_pose(scargo_leg_id_t leg, const leg_joint_pose_t *joint_pose,
                                                          vec3f_t out_points[4])
 {
+    if (joint_pose == NULL || out_points == NULL) {
+        return false;
+    }
+
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
     const float shoulder = deg2rad(-joint_pose->shoulder_deg);
@@ -412,10 +416,6 @@ bool kinematics_compute_leg_chain_from_installation_pose(scargo_leg_id_t leg, co
     float knee_world_z;
     float foot_x;
     float foot_world_z;
-
-    if (joint_pose == NULL || out_points == NULL) {
-        return false;
-    }
 
     /*
      * 这里不能简单把安装层 beta 再转换回几何层 beta，

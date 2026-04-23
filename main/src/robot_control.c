@@ -8,6 +8,8 @@
 #include "buzzer_service.h"
 #include "esp_log.h"
 #include "fan_service.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "kinematics.h"
 #include "servo_output.h"
 
@@ -115,6 +117,7 @@ static float s_roll_integral;
 static float s_pitch_integral;
 static float s_prev_roll_error;
 static float s_prev_pitch_error;
+static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
 /* 根据当前稳态周期相位，判断某条腿处于摆动相还是支撑相。 */
@@ -731,6 +734,25 @@ static float cycloid_phase(float phase)
     return phase - sinf(2.0f * (float)M_PI * phase) / (2.0f * (float)M_PI);
 }
 
+// 计算某条腿在主相位 phase 下的组相位（归一化到 [0, 1)）。
+//
+// 对角腿分组：
+//   - FRONT_RIGHT / REAR_LEFT 为主相位组（偏移量 0）
+//   - FRONT_LEFT  / REAR_RIGHT 滞后半个周期（偏移量 0.5）
+// diagonal_phase_offset 仅作用于右侧腿，用于微调左右组的相对相位差。
+static float leg_group_phase(int leg, float phase)
+{
+    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
+    if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
+        group_phase += s_config.gait.diagonal_phase_offset;
+    }
+    group_phase = fmodf(group_phase, 1.0f);
+    if (group_phase < 0.0f) {
+        group_phase += 1.0f;
+    }
+    return group_phase;
+}
+
 // 按某一时刻的步态相位，生成四条腿的目标足端。
 //
 // 当前 walk 模式的语义：
@@ -751,20 +773,7 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
     const float yaw_diff_y = clampf_local(command->yaw, -1.0f, 1.0f) * stride * 0.5f;
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        /*
-         * 对角腿组相位：
-         * - 0/3（右前/左后）作为主相位组
-         * - 1/2（左前/右后）相对其滞后半个周期
-         */
-        float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
-        if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
-            group_phase += s_config.gait.diagonal_phase_offset;
-        }
-        group_phase = fmodf(group_phase, 1.0f);
-        if (group_phase < 0.0f) {
-            group_phase += 1.0f;
-        }
-
+        float group_phase = leg_group_phase(leg, phase);
         bool in_swing = group_phase >= s_config.gait.stance_ratio;
         float phase_local;
         float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
@@ -974,6 +983,7 @@ static void apply_walk_pose(const rc_command_t *command, const attitude_state_t 
 
 void robot_control_init(const system_config_t *config)
 {
+    s_state_mutex = xSemaphoreCreateRecursiveMutex();
     vec3f_t startup_feet_world[SCARGO_LEG_COUNT];
 
     s_config = *config;
@@ -1013,67 +1023,81 @@ void robot_control_init(const system_config_t *config)
 
 void robot_control_apply_mid_pose(void)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_servo_enabled = true;
     begin_calibration_mid_pose_transition();
     ESP_LOGI(TAG, "Started smooth transition to calibrated mid-pose");
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 void robot_control_update_calibration(const calibration_config_t *calibration)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_config.calibration = *calibration;
     servo_output_update_calibration(calibration);
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 void robot_control_update_gait(const gait_config_t *gait)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_config.gait = *gait;
     kinematics_default_feet(s_default_feet_world, gait->stand_height_default_mm);
     kinematics_rest_feet(s_rest_feet_world, gait->stand_height_default_mm);
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 void robot_control_set_action(robot_action_t action)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_calibration_mode_active = false;
     s_pending_action = action;
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 robot_mode_t robot_control_get_mode(void)
 {
-    return s_mode;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    robot_mode_t mode = s_mode;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return mode;
 }
 
 void robot_control_set_motion_speed(robot_motion_speed_t speed)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_motion_speed = speed;
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 robot_motion_speed_t robot_control_get_motion_speed(void)
 {
-    return s_motion_speed;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    robot_motion_speed_t speed = s_motion_speed;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return speed;
 }
 
 void robot_control_cancel_calibration_mode(void)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_calibration_mode_active = false;
     s_log_calibration_exit_once = true;
     s_log_stand_takeover_once = true;
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
 
 bool robot_control_is_calibration_mode_active(void)
 {
-    return s_calibration_mode_active;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    bool active = s_calibration_mode_active;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return active;
 }
 
 static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase)
 {
-    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
-    if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
-        group_phase += s_config.gait.diagonal_phase_offset;
-    }
-    group_phase = fmodf(group_phase, 1.0f);
-    if (group_phase < 0.0f) {
-        group_phase += 1.0f;
-    }
+    float group_phase = leg_group_phase(leg, phase);
     return (group_phase >= s_config.gait.stance_ratio) ? ROBOT_WALK_LEG_STATE_SWING
                                                        : ROBOT_WALK_LEG_STATE_SUPPORT;
 }
@@ -1116,9 +1140,11 @@ bool robot_control_get_leg_target_angles(int leg, float out_angles_deg[SCARGO_JO
         return false;
     }
 
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     for (int joint = 0; joint < SCARGO_JOINTS_PER_LEG; ++joint) {
         out_angles_deg[joint] = s_target_angles[leg][joint];
     }
+    xSemaphoreGiveRecursive(s_state_mutex);
     return true;
 }
 
@@ -1127,49 +1153,67 @@ bool robot_control_get_current_feet_world(vec3f_t out_feet_world[SCARGO_LEG_COUN
     if (out_feet_world == NULL) {
         return false;
     }
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     copy_feet(out_feet_world, s_current_feet_world);
+    xSemaphoreGiveRecursive(s_state_mutex);
     return true;
 }
 
 body_pose_t robot_control_get_current_body_pose(void)
 {
-    return s_current_body_pose;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    body_pose_t pose = s_current_body_pose;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return pose;
 }
 
 float robot_control_get_current_height_mm(void)
 {
-    return s_current_height_mm;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    float h = s_current_height_mm;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return h;
 }
 
 robot_walk_status_t robot_control_get_walk_status(void)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    robot_walk_status_t status;
     switch (s_walk_phase) {
     case WALK_PHASE_START:
-        return ROBOT_WALK_STATUS_START;
+        status = ROBOT_WALK_STATUS_START;
+        break;
     case WALK_PHASE_STEADY:
-        return ROBOT_WALK_STATUS_STEADY;
+        status = ROBOT_WALK_STATUS_STEADY;
+        break;
     case WALK_PHASE_STOP:
-        return ROBOT_WALK_STATUS_STOP;
+        status = ROBOT_WALK_STATUS_STOP;
+        break;
     case WALK_PHASE_IDLE:
     default:
-        return ROBOT_WALK_STATUS_IDLE;
+        status = ROBOT_WALK_STATUS_IDLE;
+        break;
     }
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return status;
 }
 
 float robot_control_get_walk_phase_value(void)
 {
-    return s_walk_display_phase;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    float phase = s_walk_display_phase;
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return phase;
 }
 
 bool robot_control_get_walk_leg_states(robot_walk_leg_state_t out_states[SCARGO_LEG_COUNT])
 {
-    robot_walk_status_t status;
-
     if (out_states == NULL) {
         return false;
     }
 
-    status = robot_control_get_walk_status();
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    robot_walk_status_t status = robot_control_get_walk_status();
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
         switch (status) {
         case ROBOT_WALK_STATUS_START:
@@ -1187,11 +1231,13 @@ bool robot_control_get_walk_leg_states(robot_walk_leg_state_t out_states[SCARGO_
             break;
         }
     }
+    xSemaphoreGiveRecursive(s_state_mutex);
     return true;
 }
 
 robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     bool walk_mode = command->walk_mode || s_mode == ROBOT_MODE_WALK;
     robot_target_pose_t target = {
         .yaw_deg = walk_mode ? 0.0f : -command->yaw * s_config.gait.max_body_yaw_deg,
@@ -1203,11 +1249,13 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
         target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
         target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
     }
+    xSemaphoreGiveRecursive(s_state_mutex);
     return target;
 }
 
 void robot_control_control_tick(const rc_command_t *command, const attitude_state_t *attitude)
 {
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     static uint32_t tick_counter = 0;
     ++tick_counter;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
@@ -1217,6 +1265,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     if (!s_servo_enabled) {
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
+        xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
 
@@ -1243,6 +1292,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             update_fan_auto_context(command->link_up);
             s_last_aux_sa = command->aux_sa;
             s_last_aux_sd = command->aux_sd;
+            xSemaphoreGiveRecursive(s_state_mutex);
             return;
         }
     }
@@ -1266,6 +1316,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
+        xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
 
@@ -1289,6 +1340,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
         s_last_aux_sd = command->aux_sd;
+        xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
 
@@ -1304,6 +1356,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase_progress = 0.0f;
         update_fan_auto_context(command->link_up);
         s_last_aux_sd = command->aux_sd;
+        xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
 
@@ -1391,15 +1444,11 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
     if (!command->walk_mode && s_mode == ROBOT_MODE_WALK &&
         (s_walk_phase == WALK_PHASE_STEADY || s_walk_phase == WALK_PHASE_START)) {
-        if (s_walk_phase == WALK_PHASE_START) {
-            /*
-             * 如果在起步阶段就要求停止，由于起步本身就是朝 phase=0.5 收敛，
-             * 允许它先完成这一小段，再在下一个 tick 进入独立收步。
-             */
-            s_walk_stop_pending = true;
-        } else {
-            s_walk_stop_pending = true;
-        }
+        /*
+         * 如果在起步阶段就要求停止，由于起步本身就是朝 phase=0.5 收敛，
+         * 允许它先完成这一小段，再在下一个 tick 进入独立收步。
+         */
+        s_walk_stop_pending = true;
     }
 
     if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active && s_mode == ROBOT_MODE_STAND) {
@@ -1447,4 +1496,5 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
 
     s_last_aux_sa = command->aux_sa;
     s_last_aux_sd = command->aux_sd;
+    xSemaphoreGiveRecursive(s_state_mutex);
 }
