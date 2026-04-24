@@ -66,21 +66,6 @@ static char *load_html_asset(size_t *out_size)
     return buffer;
 }
 
-static bool check_api_auth(httpd_req_t *req)
-{
-    char auth_buf[128] = {0};
-    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_buf, sizeof(auth_buf)) != ESP_OK) {
-        return false;
-    }
-    return strcmp(auth_buf, SCARGO_API_AUTH_EXPECTED) == 0;
-}
-
-static esp_err_t reject_unauthorized(httpd_req_t *req)
-{
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ScarGo\"");
-    return httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Unauthorized");
-}
-
 static esp_err_t send_json(httpd_req_t *req, const char *json)
 {
     httpd_resp_set_type(req, "application/json");
@@ -307,9 +292,6 @@ static esp_err_t gait_get_handler(httpd_req_t *req)
 
 static esp_err_t calibration_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -362,9 +344,6 @@ static esp_err_t calibration_post_handler(httpd_req_t *req)
 
 static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -414,9 +393,6 @@ static esp_err_t calibration_preview_post_handler(httpd_req_t *req)
 
 static esp_err_t calibration_start_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -459,9 +435,6 @@ static esp_err_t calibration_start_post_handler(httpd_req_t *req)
 
 static esp_err_t gait_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -536,9 +509,6 @@ static robot_action_t action_from_name(const char *name)
 
 static esp_err_t action_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -617,9 +587,6 @@ static esp_err_t oled_page_get_handler(httpd_req_t *req)
 
 static esp_err_t oled_page_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
@@ -683,9 +650,6 @@ static esp_err_t oled_page_post_handler(httpd_req_t *req)
 
 static esp_err_t imu_yaw_zero_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     imu_service_zero_yaw();
     return send_json(req, "{\"status\":\"imu_yaw_zeroed\"}");
 }
@@ -713,9 +677,6 @@ static esp_err_t fan_get_handler(httpd_req_t *req)
 
 static esp_err_t fan_post_handler(httpd_req_t *req)
 {
-    if (!check_api_auth(req)) {
-        return reject_unauthorized(req);
-    }
     char *content = read_request_body(req);
     if (content == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
