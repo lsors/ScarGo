@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "cJSON.h"
 #include "board_defaults.h"
@@ -17,7 +18,11 @@
 #include "esp_wifi.h"
 #include "fan_service.h"
 #include "imu_service.h"
+#include "log_service.h"
+#include "imu_service.h"
+#include "ota_service.h"
 #include "rc_input.h"
+#include "wifi_config.h"
 #include "robot_control.h"
 #include "storage_service.h"
 
@@ -736,40 +741,142 @@ static esp_err_t gait_file_get_handler(httpd_req_t *req)
     return err;
 }
 
-static void wifi_init_softap(void)
+static esp_err_t imu_config_get_handler(httpd_req_t *req)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    esp_netif_create_default_wifi_ap();
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "balance_enabled", s_config->imu.balance_enabled);
+    cJSON_AddNumberToObject(root, "mount_rotation_deg", s_config->imu.mount_rotation_deg);
+    cJSON_AddBoolToObject(root, "mount_flip", s_config->imu.mount_flip);
+    char *json = cJSON_PrintUnformatted(root);
+    esp_err_t err = send_json(req, json);
+    cJSON_free(json);
+    cJSON_Delete(root);
+    return err;
+}
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    wifi_config_t wifi_config = {
-        .ap = {
-            .ssid = SCARGO_WIFI_AP_SSID,
-            .ssid_len = 0,
-            .password = SCARGO_WIFI_AP_PASSWORD,
-            .max_connection = 4,
-            .authmode = WIFI_AUTH_WPA_WPA2_PSK,
-        },
-    };
-
-    if (strlen((char *)wifi_config.ap.password) == 0) {
-        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+static esp_err_t imu_config_post_handler(httpd_req_t *req)
+{
+    char *content = read_request_body(req);
+    if (content == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
     }
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    }
+    cJSON *item = cJSON_GetObjectItem(root, "balance_enabled");
+    if (cJSON_IsBool(item)) {
+        s_config->imu.balance_enabled = cJSON_IsTrue(item);
+    }
+    item = cJSON_GetObjectItem(root, "mount_rotation_deg");
+    if (cJSON_IsNumber(item)) {
+        const int r = item->valueint;
+        s_config->imu.mount_rotation_deg = (r == 90 || r == 180 || r == 270) ? r : 0;
+    }
+    item = cJSON_GetObjectItem(root, "mount_flip");
+    if (cJSON_IsBool(item)) {
+        s_config->imu.mount_flip = cJSON_IsTrue(item);
+    }
+    cJSON_Delete(root);
+    robot_control_update_imu(&s_config->imu);
+    imu_service_update_mount(s_config->imu.mount_rotation_deg, s_config->imu.mount_flip);
+    if (!storage_service_save_imu(&s_config->imu)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save imu config");
+    }
+    return send_json(req, "{\"status\":\"saved\"}");
+}
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    return ota_service_handle_upload(req);
+}
+
+static esp_err_t log_get_handler(httpd_req_t *req)
+{
+    char query_buf[32] = "";
+    char cursor_str[16] = "0";
+    if (httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf)) == ESP_OK) {
+        httpd_query_key_value(query_buf, "cursor", cursor_str, sizeof(cursor_str));
+    }
+    uint32_t cursor = (uint32_t)strtoul(cursor_str, NULL, 10);
+    char *json = log_service_snapshot_json(cursor);
+    if (json == NULL) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+    }
+    esp_err_t err = send_json(req, json);
+    free(json);
+    return err;
+}
+
+static esp_err_t wifi_get_handler(httpd_req_t *req)
+{
+    wifi_info_t info = wifi_config_get_info();
+    const char *status_str;
+    switch (info.sta_status) {
+    case WIFI_STA_CONNECTED:  status_str = "connected";  break;
+    case WIFI_STA_CONNECTING: status_str = "connecting"; break;
+    case WIFI_STA_AUTH_FAIL:  status_str = "auth_fail";  break;
+    case WIFI_STA_FAILED:     status_str = "failed";     break;
+    default:                  status_str = "idle";       break;
+    }
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "sta_configured", info.sta_configured);
+    cJSON_AddStringToObject(root, "sta_status", status_str);
+    cJSON_AddStringToObject(root, "sta_ssid", info.sta_ssid);
+    cJSON_AddStringToObject(root, "sta_ip", info.sta_ip);
+    cJSON_AddStringToObject(root, "ap_ssid", info.ap_ssid);
+    char *json = cJSON_PrintUnformatted(root);
+    esp_err_t err = send_json(req, json);
+    cJSON_free(json);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t wifi_post_handler(httpd_req_t *req)
+{
+    char *content = read_request_body(req);
+    if (content == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No payload");
+    }
+    cJSON *root = cJSON_Parse(content);
+    free(content);
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    }
+    cJSON *ssid_item = cJSON_GetObjectItem(root, "ssid");
+    if (!cJSON_IsString(ssid_item) || ssid_item->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing ssid");
+    }
+    char ssid[33] = {0};
+    char pass[65] = {0};
+    strlcpy(ssid, ssid_item->valuestring, sizeof(ssid));
+    cJSON *pass_item = cJSON_GetObjectItem(root, "password");
+    if (cJSON_IsString(pass_item)) {
+        strlcpy(pass, pass_item->valuestring, sizeof(pass));
+    }
+    cJSON_Delete(root);
+    send_json(req, "{\"status\":\"wifi_saving\"}");
+    wifi_config_save_and_restart(ssid, pass);
+    return ESP_OK;
+}
+
+static esp_err_t wifi_forget_post_handler(httpd_req_t *req)
+{
+    send_json(req, "{\"status\":\"wifi_forgetting\"}");
+    wifi_config_forget_and_restart();
+    return ESP_OK;
 }
 
 void web_ui_start(system_config_t *config)
 {
     s_config = config;
-    wifi_init_softap();
+    wifi_config_start();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    server_config.max_uri_handlers = 16;
+    server_config.max_uri_handlers = 23;
+    server_config.recv_wait_timeout = 30;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
 
@@ -869,6 +976,30 @@ void web_ui_start(system_config_t *config)
         .handler = gait_file_get_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t imu_config_get = {
+        .uri = "/api/imu",
+        .method = HTTP_GET,
+        .handler = imu_config_get_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t imu_config_post = {
+        .uri = "/api/imu",
+        .method = HTTP_POST,
+        .handler = imu_config_post_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t ota_post = {
+        .uri = "/api/ota",
+        .method = HTTP_POST,
+        .handler = ota_post_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t log_get = {
+        .uri = "/api/log",
+        .method = HTTP_GET,
+        .handler = log_get_handler,
+        .user_ctx = NULL,
+    };
 
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &root));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_get));
@@ -886,6 +1017,32 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &fan_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &calibration_file_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_file_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &ota_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &log_get));
+
+    httpd_uri_t wifi_get = {
+        .uri = "/api/wifi",
+        .method = HTTP_GET,
+        .handler = wifi_get_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t wifi_post = {
+        .uri = "/api/wifi",
+        .method = HTTP_POST,
+        .handler = wifi_post_handler,
+        .user_ctx = NULL,
+    };
+    httpd_uri_t wifi_forget_post = {
+        .uri = "/api/wifi/forget",
+        .method = HTTP_POST,
+        .handler = wifi_forget_post_handler,
+        .user_ctx = NULL,
+    };
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &wifi_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &wifi_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &wifi_forget_post));
 
     ESP_LOGI(TAG, "Calibration/test web UI started");
 }

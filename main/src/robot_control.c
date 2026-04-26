@@ -649,7 +649,7 @@ static void solve_and_apply_feet(const vec3f_t feet_world[SCARGO_LEG_COUNT], flo
 
 static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
 {
-    if (!attitude->ready) {
+    if (!s_config.imu.balance_enabled || !attitude->ready) {
         return;
     }
 
@@ -1044,6 +1044,19 @@ void robot_control_update_gait(const gait_config_t *gait)
     s_config.gait = *gait;
     kinematics_default_feet(s_default_feet_world, gait->stand_height_default_mm);
     kinematics_rest_feet(s_rest_feet_world, gait->stand_height_default_mm);
+    xSemaphoreGiveRecursive(s_state_mutex);
+}
+
+void robot_control_update_imu(const imu_config_t *imu)
+{
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    s_config.imu = *imu;
+    if (!imu->balance_enabled) {
+        s_roll_integral = 0.0f;
+        s_pitch_integral = 0.0f;
+        s_prev_roll_error = 0.0f;
+        s_prev_pitch_error = 0.0f;
+    }
     xSemaphoreGiveRecursive(s_state_mutex);
 }
 

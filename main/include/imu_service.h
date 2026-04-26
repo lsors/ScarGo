@@ -16,3 +16,4 @@ void imu_service_init(void);
 void imu_service_tick(void);
 attitude_state_t imu_service_get_attitude(void);
 void imu_service_zero_yaw(void);
+void imu_service_update_mount(int rotation_deg, bool flip);

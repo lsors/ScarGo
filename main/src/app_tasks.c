@@ -84,6 +84,7 @@ void app_tasks_start(const system_config_t *config)
     robot_control_init(config);
     cpu_usage_service_init();
     imu_service_init();
+    imu_service_update_mount(config->imu.mount_rotation_deg, config->imu.mount_flip);
     rc_input_init();
     fan_service_init();
     display_service_init();

@@ -76,6 +76,7 @@ void robot_control_init(const system_config_t *config);
 void robot_control_apply_mid_pose(void);
 void robot_control_update_calibration(const calibration_config_t *calibration);
 void robot_control_update_gait(const gait_config_t *gait);
+void robot_control_update_imu(const imu_config_t *imu);
 void robot_control_control_tick(const rc_command_t *command, const attitude_state_t *attitude);
 void robot_control_set_action(robot_action_t action);
 robot_mode_t robot_control_get_mode(void);

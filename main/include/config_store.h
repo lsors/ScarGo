@@ -39,9 +39,16 @@ typedef struct {
 } oled_config_t;
 
 typedef struct {
+    bool balance_enabled;
+    int  mount_rotation_deg;  // 0 / 90 / 180 / 270 — IMU 绕 Z 轴 CCW 转动角度
+    bool mount_flip;          // true = 元器件面朝下（翻转），Z 轴反向
+} imu_config_t;
+
+typedef struct {
     calibration_config_t calibration;
     gait_config_t gait;
     oled_config_t oled;
+    imu_config_t imu;
 } system_config_t;
 
 void config_store_set_defaults(system_config_t *config);

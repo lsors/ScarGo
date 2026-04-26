@@ -1,20 +1,22 @@
 #include "storage_service.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "cJSON.h"
 #include "config_store.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "nvs.h"
 
 static const char *TAG = "storage";
-static const char *CALIBRATION_PATH = "/spiffs/calibration.json";
-static const char *GAIT_PATH = "/spiffs/gait.json";
-static const char *OLED_PATH = "/spiffs/oled.json";
+
+#define NVS_CFG_NAMESPACE "cfg_store"
+#define NVS_KEY_CALIB     "calib"
+#define NVS_KEY_GAIT      "gait"
+#define NVS_KEY_OLED      "oled"
+#define NVS_KEY_IMU       "imu"
 
 static void log_json_blob(const char *label, const char *json_text)
 {
@@ -25,41 +27,43 @@ static void log_json_blob(const char *label, const char *json_text)
     ESP_LOGI(TAG, "%s JSON:\n%s", label, json_text);
 }
 
-static char *read_text_file(const char *path)
+static char *nvs_read_string(const char *key)
 {
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_CFG_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
         return NULL;
     }
-
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    rewind(file);
-
-    char *buffer = calloc(1, (size_t)size + 1U);
-    if (buffer == NULL) {
-        fclose(file);
+    size_t required = 0;
+    if (nvs_get_str(nvs, key, NULL, &required) != ESP_OK) {
+        nvs_close(nvs);
         return NULL;
     }
-
-    size_t bytes_read = fread(buffer, 1U, (size_t)size, file);
-    fclose(file);
-    if (bytes_read != (size_t)size) {
-        free(buffer);
+    char *buf = malloc(required);
+    if (buf == NULL) {
+        nvs_close(nvs);
         return NULL;
     }
-    return buffer;
+    if (nvs_get_str(nvs, key, buf, &required) != ESP_OK) {
+        free(buf);
+        nvs_close(nvs);
+        return NULL;
+    }
+    nvs_close(nvs);
+    return buf;
 }
 
-static bool write_text_file(const char *path, const char *content)
+static bool nvs_write_string(const char *key, const char *value)
 {
-    FILE *file = fopen(path, "wb");
-    if (file == NULL) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_CFG_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) {
         return false;
     }
-    size_t written = fwrite(content, 1U, strlen(content), file);
-    fclose(file);
-    return written == strlen(content);
+    esp_err_t err = nvs_set_str(nvs, key, value);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err == ESP_OK;
 }
 
 static cJSON *create_calibration_json(const calibration_config_t *config)
@@ -117,16 +121,42 @@ static cJSON *create_oled_json(const oled_config_t *config)
     return root;
 }
 
-static bool save_json_file(const char *path, cJSON *root)
+static cJSON *create_imu_json(const imu_config_t *config)
 {
-    char *serialized = cJSON_Print(root);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "balance_enabled", config->balance_enabled);
+    cJSON_AddNumberToObject(root, "mount_rotation_deg", config->mount_rotation_deg);
+    cJSON_AddBoolToObject(root, "mount_flip", config->mount_flip);
+    return root;
+}
+
+static void load_imu_from_json(imu_config_t *config, cJSON *root)
+{
+    cJSON *item = cJSON_GetObjectItem(root, "balance_enabled");
+    if (cJSON_IsBool(item)) {
+        config->balance_enabled = cJSON_IsTrue(item);
+    }
+    item = cJSON_GetObjectItem(root, "mount_rotation_deg");
+    if (cJSON_IsNumber(item)) {
+        const int r = item->valueint;
+        config->mount_rotation_deg = (r == 90 || r == 180 || r == 270) ? r : 0;
+    }
+    item = cJSON_GetObjectItem(root, "mount_flip");
+    if (cJSON_IsBool(item)) {
+        config->mount_flip = cJSON_IsTrue(item);
+    }
+}
+
+static bool save_json_nvs(const char *key, cJSON *root)
+{
+    char *serialized = cJSON_PrintUnformatted(root);
     bool ok = false;
     if (serialized != NULL) {
-        ok = write_text_file(path, serialized);
+        ok = nvs_write_string(key, serialized);
         if (ok) {
-            log_json_blob(path, serialized);
+            log_json_blob(key, serialized);
         } else {
-            ESP_LOGW(TAG, "Failed to write JSON file: %s", path);
+            ESP_LOGW(TAG, "Failed to write NVS key: %s", key);
         }
         cJSON_free(serialized);
     }
@@ -236,7 +266,7 @@ bool storage_service_init(void)
     esp_vfs_spiffs_conf_t conf = {
         .base_path = "/spiffs",
         .partition_label = NULL,
-        .max_files = 6,
+        .max_files = 4,
         .format_if_mount_failed = true,
     };
 
@@ -259,43 +289,56 @@ bool storage_service_load_all(system_config_t *config)
 {
     bool ok = true;
 
-    char *calibration_text = read_text_file(CALIBRATION_PATH);
-    if (calibration_text == NULL) {
+    char *calib_text = nvs_read_string(NVS_KEY_CALIB);
+    if (calib_text == NULL) {
         ok &= storage_service_save_calibration(&config->calibration);
     } else {
-        log_json_blob("loaded calibration", calibration_text);
-        cJSON *root = cJSON_Parse(calibration_text);
+        log_json_blob(NVS_KEY_CALIB, calib_text);
+        cJSON *root = cJSON_Parse(calib_text);
+        free(calib_text);
         if (root != NULL) {
             load_calibration_from_json(&config->calibration, root);
             cJSON_Delete(root);
         }
-        free(calibration_text);
     }
 
-    char *gait_text = read_text_file(GAIT_PATH);
+    char *gait_text = nvs_read_string(NVS_KEY_GAIT);
     if (gait_text == NULL) {
         ok &= storage_service_save_gait(&config->gait);
     } else {
-        log_json_blob("loaded gait", gait_text);
+        log_json_blob(NVS_KEY_GAIT, gait_text);
         cJSON *root = cJSON_Parse(gait_text);
+        free(gait_text);
         if (root != NULL) {
             load_gait_from_json(&config->gait, root);
             cJSON_Delete(root);
         }
-        free(gait_text);
     }
 
-    char *oled_text = read_text_file(OLED_PATH);
+    char *oled_text = nvs_read_string(NVS_KEY_OLED);
     if (oled_text == NULL) {
         ok &= storage_service_save_oled(&config->oled);
     } else {
-        log_json_blob("loaded oled", oled_text);
+        log_json_blob(NVS_KEY_OLED, oled_text);
         cJSON *root = cJSON_Parse(oled_text);
+        free(oled_text);
         if (root != NULL) {
             load_oled_from_json(&config->oled, root);
             cJSON_Delete(root);
         }
-        free(oled_text);
+    }
+
+    char *imu_text = nvs_read_string(NVS_KEY_IMU);
+    if (imu_text == NULL) {
+        ok &= storage_service_save_imu(&config->imu);
+    } else {
+        log_json_blob(NVS_KEY_IMU, imu_text);
+        cJSON *root = cJSON_Parse(imu_text);
+        free(imu_text);
+        if (root != NULL) {
+            load_imu_from_json(&config->imu, root);
+            cJSON_Delete(root);
+        }
     }
 
     return ok;
@@ -303,30 +346,35 @@ bool storage_service_load_all(system_config_t *config)
 
 bool storage_service_save_calibration(const calibration_config_t *config)
 {
-    return save_json_file(CALIBRATION_PATH, create_calibration_json(config));
+    return save_json_nvs(NVS_KEY_CALIB, create_calibration_json(config));
 }
 
 bool storage_service_save_gait(const gait_config_t *config)
 {
-    return save_json_file(GAIT_PATH, create_gait_json(config));
+    return save_json_nvs(NVS_KEY_GAIT, create_gait_json(config));
 }
 
 bool storage_service_save_oled(const oled_config_t *config)
 {
-    return save_json_file(OLED_PATH, create_oled_json(config));
+    return save_json_nvs(NVS_KEY_OLED, create_oled_json(config));
+}
+
+bool storage_service_save_imu(const imu_config_t *config)
+{
+    return save_json_nvs(NVS_KEY_IMU, create_imu_json(config));
 }
 
 char *storage_service_read_calibration_json(void)
 {
-    return read_text_file(CALIBRATION_PATH);
+    return nvs_read_string(NVS_KEY_CALIB);
 }
 
 char *storage_service_read_gait_json(void)
 {
-    return read_text_file(GAIT_PATH);
+    return nvs_read_string(NVS_KEY_GAIT);
 }
 
 char *storage_service_read_oled_json(void)
 {
-    return read_text_file(OLED_PATH);
+    return nvs_read_string(NVS_KEY_OLED);
 }

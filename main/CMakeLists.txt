@@ -9,6 +9,9 @@ set(SOURCES
     src/fan_service.c
     src/imu_service.c
     src/kinematics.c
+    src/log_service.c
+    src/ota_service.c
+    src/wifi_config.c
     src/pca9685_driver.c
     src/rc_input.c
     src/robot_control.c
@@ -21,5 +24,5 @@ set(SOURCES
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS "include"
-    REQUIRES esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_driver_uart esp_event esp_http_server esp_netif esp_pm esp_wifi json nvs_flash spiffs
+    REQUIRES app_update esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_driver_uart esp_event esp_http_server esp_netif esp_pm esp_wifi json mdns nvs_flash spiffs
     )
