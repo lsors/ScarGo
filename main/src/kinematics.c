@@ -93,19 +93,19 @@ static vec3f_t rotate_z(vec3f_t input, float radians)
 }
 
 // 生成标准站立脚点。
-// 这里的四个点位于机身四个髋关节正下方，也就是默认让 x/y 与髋关节重合，
-// 这样站立高度变化时，足端主要沿 z 方向变化，便于保持站姿稳定。
+// 足端在髋关节正下方基础上向外展开半个肩膀长度，增大支撑多边形面积。
 void kinematics_default_feet(vec3f_t feet_body[SCARGO_LEG_COUNT], float stand_height_mm)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
+    const float spread = mech->shoulder_length_mm * SCARGO_FOOT_LATERAL_SPREAD_RATIO;
     (void)stand_height_mm;
 
-    feet_body[SCARGO_LEG_FRONT_RIGHT] = (vec3f_t){.x_mm = -half_width, .y_mm = half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_FRONT_LEFT] = (vec3f_t){.x_mm = half_width, .y_mm = half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_REAR_RIGHT] = (vec3f_t){.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_REAR_LEFT] = (vec3f_t){.x_mm = half_width, .y_mm = -half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_FRONT_RIGHT] = (vec3f_t){.x_mm = -(half_width + spread), .y_mm = half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_FRONT_LEFT]  = (vec3f_t){.x_mm =  (half_width + spread), .y_mm = half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_REAR_RIGHT]  = (vec3f_t){.x_mm = -(half_width + spread), .y_mm = -half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_REAR_LEFT]   = (vec3f_t){.x_mm =  (half_width + spread), .y_mm = -half_length, .z_mm = 0.0f};
 }
 
 // 生成趴下/收腿时使用的默认脚点。
@@ -115,14 +115,13 @@ void kinematics_rest_feet(vec3f_t feet_body[SCARGO_LEG_COUNT], float reference_h
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
+    const float spread = mech->shoulder_length_mm * SCARGO_FOOT_LATERAL_SPREAD_RATIO;
     (void)reference_height_mm;
 
-    // During stand/lie transitions keep each foot directly under its hip in body X/Y.
-    // That makes the foot motion primarily vertical in the leg frame instead of drifting forward.
-    feet_body[SCARGO_LEG_FRONT_RIGHT] = (vec3f_t){.x_mm = -half_width, .y_mm = half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_FRONT_LEFT] = (vec3f_t){.x_mm = half_width, .y_mm = half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_REAR_RIGHT] = (vec3f_t){.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f};
-    feet_body[SCARGO_LEG_REAR_LEFT] = (vec3f_t){.x_mm = half_width, .y_mm = -half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_FRONT_RIGHT] = (vec3f_t){.x_mm = -(half_width + spread), .y_mm = half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_FRONT_LEFT]  = (vec3f_t){.x_mm =  (half_width + spread), .y_mm = half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_REAR_RIGHT]  = (vec3f_t){.x_mm = -(half_width + spread), .y_mm = -half_length, .z_mm = 0.0f};
+    feet_body[SCARGO_LEG_REAR_LEFT]   = (vec3f_t){.x_mm =  (half_width + spread), .y_mm = -half_length, .z_mm = 0.0f};
 }
 
 // 把“世界坐标中的足端位置”转换到机身局部坐标。

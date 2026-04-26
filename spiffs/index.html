@@ -604,6 +604,34 @@
         flex-basis: 100%;
       }
     }
+    .rc-sw-card {
+      background: #1a1f2e;
+      border-radius: 10px;
+      padding: 10px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .rc-sw-label {
+      font-size: 12px;
+      color: #66757f;
+      font-weight: 600;
+    }
+    .rc-sw-bar {
+      display: flex;
+      gap: 5px;
+    }
+    .rc-sw-bar .sw-pip {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      background: #2a3a4a;
+      transition: background 0.1s;
+    }
+    .rc-sw-bar .sw-pip.active {
+      background: #1f7a8c;
+    }
   </style>
 </head>
 <body>
@@ -828,26 +856,29 @@
         <p class="hint" data-i18n="imuMountHint">Set the physical mounting orientation of the IMU sensor. Changes take effect immediately and are saved to flash.</p>
 
         <!-- Live preview -->
-        <div style="position:relative">
-          <div class="imu-canvas-wrap">
-            <canvas id="imu_mount_canvas" width="240" height="240" style="width:min(100%,240px);height:auto;aspect-ratio:1/1"></canvas>
+        <button id="imu-preview-btn" class="ghost" onclick="toggleImuPreview()" style="margin-bottom:10px">▶ 开启实时预览</button>
+        <div id="imu-preview-wrap" style="display:none">
+          <div style="position:relative">
+            <div class="imu-canvas-wrap">
+              <canvas id="imu_mount_canvas" width="240" height="240" style="width:min(100%,240px);height:auto;aspect-ratio:1/1"></canvas>
+            </div>
+            <div id="imu-mount-nodev" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:rgba(243,237,226,0.82);border-radius:14px">
+              <span style="font-size:13px;color:#66757f" data-i18n="imuNoDevice">No IMU detected</span>
+            </div>
           </div>
-          <div id="imu-mount-nodev" style="display:none;position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(243,237,226,0.82);border-radius:14px">
-            <span style="font-size:13px;color:#66757f" data-i18n="imuNoDevice">No IMU detected</span>
-          </div>
-        </div>
-        <div class="imu-readout" style="margin-top:8px">
-          <div class="imu-pill">
-            <span class="label">Roll</span>
-            <span class="num" id="imu-mount-roll" style="font-size:18px">—</span>
-          </div>
-          <div class="imu-pill">
-            <span class="label">Pitch</span>
-            <span class="num" id="imu-mount-pitch" style="font-size:18px">—</span>
-          </div>
-          <div class="imu-pill">
-            <span class="label">Yaw</span>
-            <span class="num" id="imu-mount-yaw" style="font-size:18px">—</span>
+          <div class="imu-readout" style="margin-top:8px">
+            <div class="imu-pill">
+              <span class="label">Roll</span>
+              <span class="num" id="imu-mount-roll" style="font-size:18px">—</span>
+            </div>
+            <div class="imu-pill">
+              <span class="label">Pitch</span>
+              <span class="num" id="imu-mount-pitch" style="font-size:18px">—</span>
+            </div>
+            <div class="imu-pill">
+              <span class="label">Yaw</span>
+              <span class="num" id="imu-mount-yaw" style="font-size:18px">—</span>
+            </div>
           </div>
         </div>
 
@@ -873,25 +904,91 @@
         <pre id="imu_mount_status" style="margin:8px 0 0;font-size:12px;color:var(--brand-strong);min-height:1em"></pre>
       </div>
 
+      <!-- RC Preview -->
+      <div class="slider-card">
+        <div class="slider-head"><label data-i18n="pageRc">RC</label></div>
+        <p class="hint" data-i18n="rcDesc">遥控实时预览</p>
+        <button id="rc-preview-btn" class="ghost" onclick="toggleRcPreview()" style="margin-bottom:10px">▶ 开启实时预览</button>
+        <div id="rc-preview-wrap" style="display:none">
+          <div id="rc-no-link" style="display:none;padding:6px 0;color:#e07070;font-size:13px" data-i18n="rcNoLink">遥控未连接</div>
+          <!-- 摇杆 -->
+          <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+              <span style="font-size:13px;color:#66757f" data-i18n="rcLeftStick">左摇杆 油门/偏航</span>
+              <canvas id="rc-stick-left" width="160" height="160" style="border-radius:12px;background:#1a1f2e"></canvas>
+              <div style="display:flex;gap:16px;font-size:12px;color:#66757f">
+                <span>T: <b id="rc-val-throttle">—</b></span>
+                <span>Y: <b id="rc-val-yaw">—</b></span>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+              <span style="font-size:13px;color:#66757f" data-i18n="rcRightStick">右摇杆 俯仰/横滚</span>
+              <canvas id="rc-stick-right" width="160" height="160" style="border-radius:12px;background:#1a1f2e"></canvas>
+              <div style="display:flex;gap:16px;font-size:12px;color:#66757f">
+                <span>P: <b id="rc-val-pitch">—</b></span>
+                <span>R: <b id="rc-val-roll">—</b></span>
+              </div>
+            </div>
+          </div>
+          <!-- 8路开关 -->
+          <div style="font-size:13px;color:#66757f;margin-bottom:10px" data-i18n="rcSwitches">开关通道</div>
+          <div id="rc-switches" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+            <div class="rc-sw-card"><div class="rc-sw-label">SA</div><div class="rc-sw-bar" id="rc-sw-0"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">SB</div><div class="rc-sw-bar" id="rc-sw-1"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">SC</div><div class="rc-sw-bar" id="rc-sw-2"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">SD</div><div class="rc-sw-bar" id="rc-sw-3"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">CH9</div><div class="rc-sw-bar" id="rc-sw-4"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">CH10</div><div class="rc-sw-bar" id="rc-sw-5"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">CH11</div><div class="rc-sw-bar" id="rc-sw-6"></div></div>
+            <div class="rc-sw-card"><div class="rc-sw-label">CH12</div><div class="rc-sw-bar" id="rc-sw-7"></div></div>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <section id="page-ota" class="card tab page">
       <div class="section-head">
         <h2 data-i18n="otaTitle">OTA Update</h2>
-        <p class="muted" data-i18n="otaDesc">Select a firmware .bin file and click Flash. The device will restart automatically after a successful update.</p>
+        <p class="muted" data-i18n="otaDesc">刷入新固件后设备自动重启，页面会等待设备上线后自动刷新。</p>
       </div>
-      <div style="display:grid;gap:12px">
-        <input type="file" id="ota_file" accept=".bin" style="padding:10px;border-radius:12px;border:1px solid var(--line);font-size:14px">
-        <div class="actions">
-          <button id="btn-ota-flash" onclick="startOta()" data-i18n="otaFlash">Flash Firmware</button>
-        </div>
-        <div id="ota_progress" style="display:none">
-          <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
-            <div id="ota_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+
+      <!-- 固件 -->
+      <div class="slider-card">
+        <div class="slider-head"><label data-i18n="otaFwTitle">固件 (scargo.bin)</label></div>
+        <p class="hint" data-i18n="otaFwDesc">包含 ESP32 主程序：运动控制、WiFi、API 等全部 C 代码逻辑。修改 C 代码后需要刷此文件。</p>
+        <div style="display:grid;gap:10px">
+          <input type="file" id="ota_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px">
+          <div class="actions">
+            <button id="btn-ota-flash" onclick="startOta('fw')" data-i18n="otaFlash">Flash 固件</button>
           </div>
-          <div style="margin-top:6px;font-size:13px;color:#53636c" id="ota_progress_text">Uploading...</div>
+          <div id="ota_progress" style="display:none">
+            <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
+              <div id="ota_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+            </div>
+            <div style="margin-top:6px;font-size:13px;color:#53636c" id="ota_progress_text"></div>
+          </div>
+          <pre id="ota_status" style="margin:0;font-size:13px;color:var(--brand-strong);white-space:pre-wrap;min-height:1.2em"></pre>
         </div>
-        <pre id="ota_status" style="margin:0;font-size:13px;color:var(--brand-strong);white-space:pre-wrap"></pre>
+      </div>
+
+      <!-- 网页文件 -->
+      <div class="slider-card">
+        <div class="slider-head"><label data-i18n="otaSpiffsTitle">网页文件 (storage.bin)</label></div>
+        <p class="hint" data-i18n="otaSpiffsDesc">包含 Web UI 界面（index.html）。修改网页样式、布局、交互逻辑后需要单独刷此文件，不影响固件逻辑。分区容量 1080 KB，当前 UI 约 92 KB。</p>
+        <div style="display:grid;gap:10px">
+          <input type="file" id="ota_spiffs_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px">
+          <div class="actions">
+            <button id="btn-ota-spiffs" onclick="startOta('spiffs')" data-i18n="otaSpiffsFlash">Flash 网页</button>
+          </div>
+          <div id="ota_spiffs_progress" style="display:none">
+            <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
+              <div id="ota_spiffs_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+            </div>
+            <div style="margin-top:6px;font-size:13px;color:#53636c" id="ota_spiffs_progress_text"></div>
+          </div>
+          <pre id="ota_spiffs_status" style="margin:0;font-size:13px;color:var(--brand-strong);white-space:pre-wrap;min-height:1.2em"></pre>
+        </div>
       </div>
     </section>
 
@@ -915,6 +1012,8 @@
     let currentLang = "en";
     let activePage = "calibration";
     let calibrationRunning = false;
+    let s_imuPreviewOn = false;
+    let s_rcPreviewOn = false;
     let currentOledPage = "rc";
     let currentOledLeg = 0;
     let currentOledLegView = "iso";
@@ -949,6 +1048,12 @@
         pageOta: "OTA",
         pageLog: "Log",
         pageSettings: "Settings",
+        pageRc: "RC",
+        rcDesc: "Remote control live preview",
+        rcNoLink: "RC not connected",
+        rcLeftStick: "Left stick  Throttle / Yaw",
+        rcRightStick: "Right stick  Pitch / Roll",
+        rcSwitches: "Switch channels",
         imuMountTitle: "IMU Mounting",
         imuMountHint: "Set the physical mounting orientation of the IMU sensor. Changes take effect immediately.",
         imuBalanceLabel: "Balance PID",
@@ -1046,10 +1151,17 @@
         statusCalibrationSavedAndExited: "Calibration saved and calibration mode exited",
         statusFanSaved: "Fan setting applied",
         otaTitle: "OTA Update",
-        otaDesc: "Select a firmware .bin file and click Flash. The device will restart automatically after a successful update.",
+        otaDesc: "Flash new firmware. The device restarts automatically and the page reconnects.",
+        otaFwTitle: "Firmware (scargo.bin)",
+        otaFwDesc: "Contains all ESP32 C code: motion control, WiFi, API, etc. Flash this after changing C source files.",
         otaFlash: "Flash Firmware",
+        otaSpiffsTitle: "Web UI (storage.bin)",
+        otaSpiffsDesc: "Contains the Web UI (index.html). Flash this after changing the web page. Partition: 1080 KB, current UI: ~92 KB.",
+        otaSpiffsFlash: "Flash Web UI",
         otaUploading: "Uploading",
-        otaSuccess: "Flash complete! Device is restarting...",
+        otaSuccess: "Flash complete! Waiting for device to restart...",
+        otaReconnecting: "Reconnecting",
+        otaOnline: "Device is back online! Reloading...",
         otaError: "Flash failed",
         logTitle: "Log Viewer",
         logDesc: "Streams ESP_LOG output over WiFi. Polls every second while active.",
@@ -1081,6 +1193,12 @@
         pageOta: "OTA",
         pageLog: "日志",
         pageSettings: "设置",
+        pageRc: "遥控",
+        rcDesc: "遥控实时预览",
+        rcNoLink: "遥控未连接",
+        rcLeftStick: "左摇杆  油门 / 偏航",
+        rcRightStick: "右摇杆  俯仰 / 横滚",
+        rcSwitches: "开关通道",
         imuMountTitle: "IMU 安装设置",
         imuMountHint: "设置 IMU 传感器的物理安装方向，修改后立即生效并保存到 Flash。",
         imuBalanceLabel: "平衡 PID",
@@ -1177,11 +1295,18 @@
         statusCalibrationPending: "数值已更新到页面，本次还未驱动舵机。点击启动标定后再应用。",
         statusCalibrationSavedAndExited: "标定已保存，并已退出标定状态",
         statusFanSaved: "风扇设置已应用",
-        otaTitle: "OTA 固件更新",
-        otaDesc: "选择编译好的 .bin 固件文件，点击烧写。烧写成功后设备会自动重启。",
+        otaTitle: "OTA 更新",
+        otaDesc: "刷入新固件后设备自动重启，页面会等待设备上线后自动刷新。",
+        otaFwTitle: "固件 (scargo.bin)",
+        otaFwDesc: "包含 ESP32 主程序：运动控制、WiFi、API 等全部 C 代码逻辑。修改 C 代码后刷此文件。",
         otaFlash: "烧写固件",
+        otaSpiffsTitle: "网页文件 (storage.bin)",
+        otaSpiffsDesc: "包含 Web UI 界面（index.html）。修改网页后单独刷此文件，不影响固件逻辑。分区 1080 KB，当前 UI 约 92 KB。",
+        otaSpiffsFlash: "烧写网页",
         otaUploading: "上传中",
-        otaSuccess: "烧写完成！设备正在重启…",
+        otaSuccess: "烧写完成！等待设备重启…",
+        otaReconnecting: "正在重连",
+        otaOnline: "设备已上线，正在刷新…",
         otaError: "烧写失败",
         logTitle: "日志查看器",
         logDesc: "通过 WiFi 流式输出 ESP_LOG 日志，开启后每秒轮询一次。",
@@ -1641,7 +1766,7 @@
     }
 
     function fetchFanStatus() {
-      return fetch("/api/fan")
+      return fetch("/api/fan", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
           updateFanStatus(data);
@@ -1773,7 +1898,7 @@
     }
 
     function fetchImuConfig() {
-      fetch("/api/imu")
+      fetch("/api/imu", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
           imuConfig.balance_enabled = !!data.balance_enabled;
@@ -1789,6 +1914,22 @@
         .then(() => {
           updateImuMountUI();
         });
+    }
+
+    function toggleImuPreview() {
+      s_imuPreviewOn = !s_imuPreviewOn;
+      const wrap = document.getElementById("imu-preview-wrap");
+      const btn  = document.getElementById("imu-preview-btn");
+      if (wrap) wrap.style.display = s_imuPreviewOn ? "block" : "none";
+      if (btn)  btn.textContent = s_imuPreviewOn ? "■ 关闭实时预览" : "▶ 开启实时预览";
+    }
+
+    function toggleRcPreview() {
+      s_rcPreviewOn = !s_rcPreviewOn;
+      const wrap = document.getElementById("rc-preview-wrap");
+      const btn  = document.getElementById("rc-preview-btn");
+      if (wrap) wrap.style.display = s_rcPreviewOn ? "block" : "none";
+      if (btn)  btn.textContent = s_rcPreviewOn ? "■ 关闭实时预览" : "▶ 开启实时预览";
     }
 
     function setImuBalance(enabled) {
@@ -1812,23 +1953,57 @@
       });
     }
 
-    function startOta() {
-      const fileInput = document.getElementById("ota_file");
+    function startOta(type) {
+      const isFw = type !== "spiffs";
+      const fileId    = isFw ? "ota_file"            : "ota_spiffs_file";
+      const btnId     = isFw ? "btn-ota-flash"        : "btn-ota-spiffs";
+      const barId     = isFw ? "ota_bar"              : "ota_spiffs_bar";
+      const progId    = isFw ? "ota_progress"         : "ota_spiffs_progress";
+      const textId    = isFw ? "ota_progress_text"    : "ota_spiffs_progress_text";
+      const statusId  = isFw ? "ota_status"           : "ota_spiffs_status";
+      const endpoint  = isFw ? "/api/ota"             : "/api/ota/spiffs";
+
+      const fileInput = document.getElementById(fileId);
       if (!fileInput.files || !fileInput.files.length) {
-        document.getElementById("ota_status").textContent = currentLang === "zh" ? "请先选择 .bin 文件" : "Please select a .bin file first";
+        document.getElementById(statusId).textContent =
+          currentLang === "zh" ? "请先选择 .bin 文件" : "Please select a .bin file first";
         return;
       }
       const file = fileInput.files[0];
-      const btn = document.getElementById("btn-ota-flash");
-      const bar = document.getElementById("ota_bar");
-      const progressText = document.getElementById("ota_progress_text");
-      const statusEl = document.getElementById("ota_status");
+      const btn  = document.getElementById(btnId);
+      const bar  = document.getElementById(barId);
+      const progressText = document.getElementById(textId);
+      const statusEl     = document.getElementById(statusId);
+
       btn.disabled = true;
-      document.getElementById("ota_progress").style.display = "block";
+      document.getElementById(progId).style.display = "block";
+      bar.style.width = "0%";
+      bar.style.background = "var(--brand)";
       statusEl.textContent = "";
 
+      function beginReconnect() {
+        bar.style.width = "100%";
+        bar.style.background = "#f0a030";
+        progressText.textContent = "100%";
+        statusEl.textContent = t("otaSuccess");
+        let elapsed = 0;
+        const poll = setInterval(() => {
+          elapsed += 2;
+          statusEl.textContent = t("otaReconnecting") + "... " + elapsed + "s";
+          fetch("/api/status", { signal: AbortSignal.timeout(1500) })
+            .then((r) => { if (r.ok) return r.json(); throw new Error(); })
+            .then(() => {
+              clearInterval(poll);
+              bar.style.background = "#22b84a";
+              statusEl.textContent = t("otaOnline");
+              setTimeout(() => location.reload(), 1200);
+            })
+            .catch(() => {});
+        }, 2000);
+      }
+
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/ota");
+      xhr.open("POST", endpoint);
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
@@ -1838,20 +2013,15 @@
         }
       });
       xhr.onload = () => {
-        bar.style.width = "100%";
         if (xhr.status === 200) {
-          progressText.textContent = "100%";
-          statusEl.textContent = t("otaSuccess");
+          beginReconnect();
         } else {
           statusEl.textContent = t("otaError") + ": " + xhr.responseText;
           btn.disabled = false;
         }
       };
       xhr.onerror = () => {
-        // Connection reset after esp_restart() is expected; treat as success
-        bar.style.width = "100%";
-        progressText.textContent = "100%";
-        statusEl.textContent = t("otaSuccess");
+        beginReconnect();
       };
       xhr.send(file);
     }
@@ -1964,7 +2134,7 @@
     }
 
     function refreshStatus() {
-      return fetch("/api/status")
+      return fetch("/api/status", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
           document.getElementById("runtime_status").textContent =
@@ -1992,19 +2162,86 @@
 
           if (activePage === "settings") {
             const imuReady = !!data.imu_ready;
-            const nodevEl = document.getElementById("imu-mount-nodev");
-            if (nodevEl) nodevEl.style.display = imuReady ? "none" : "flex";
-            if (imuReady) {
-              drawImuCube("imu_mount_canvas", data.roll_deg, data.pitch_deg, data.yaw_deg);
+            if (s_imuPreviewOn) {
+              const nodevEl = document.getElementById("imu-mount-nodev");
+              if (nodevEl) nodevEl.style.display = imuReady ? "none" : "flex";
+              if (imuReady) {
+                drawImuCube("imu_mount_canvas", data.roll_deg, data.pitch_deg, data.yaw_deg);
+              }
+              const rollEl = document.getElementById("imu-mount-roll");
+              const pitchEl = document.getElementById("imu-mount-pitch");
+              const yawEl = document.getElementById("imu-mount-yaw");
+              if (rollEl) rollEl.textContent = imuReady ? data.roll_deg.toFixed(1) + "°" : "—";
+              if (pitchEl) pitchEl.textContent = imuReady ? data.pitch_deg.toFixed(1) + "°" : "—";
+              if (yawEl) yawEl.textContent = imuReady ? data.yaw_deg.toFixed(1) + "°" : "—";
             }
-            const rollEl = document.getElementById("imu-mount-roll");
-            const pitchEl = document.getElementById("imu-mount-pitch");
-            const yawEl = document.getElementById("imu-mount-yaw");
-            if (rollEl) rollEl.textContent = imuReady ? data.roll_deg.toFixed(1) + "°" : "—";
-            if (pitchEl) pitchEl.textContent = imuReady ? data.pitch_deg.toFixed(1) + "°" : "—";
-            if (yawEl) yawEl.textContent = imuReady ? data.yaw_deg.toFixed(1) + "°" : "—";
+
+            // RC preview
+            if (s_rcPreviewOn) {
+            const linked = !!data.rc_link;
+            const noLink = document.getElementById("rc-no-link");
+            if (noLink) noLink.style.display = linked ? "none" : "block";
+            drawStick("rc-stick-left",  data.rc_yaw      ?? 0, -(data.rc_throttle ?? 0));
+            drawStick("rc-stick-right", data.rc_roll     ?? 0, -(data.rc_pitch    ?? 0));
+            const fmt = (v) => (v >= 0 ? "+" : "") + (v ?? 0).toFixed(2);
+            document.getElementById("rc-val-throttle").textContent = fmt(data.rc_throttle);
+            document.getElementById("rc-val-yaw").textContent      = fmt(data.rc_yaw);
+            document.getElementById("rc-val-pitch").textContent    = fmt(data.rc_pitch);
+            document.getElementById("rc-val-roll").textContent     = fmt(data.rc_roll);
+            const aux = data.rc_aux || [];
+            aux.forEach((val, i) => updateSwitch(i, val));
+            }
           }
         });
+    }
+
+    function drawStick(canvasId, x, y) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+      const cx = w / 2, cy = h / 2;
+      const r = Math.min(w, h) / 2 - 8;
+      ctx.clearRect(0, 0, w, h);
+      // background circle
+      ctx.fillStyle = "#242c3d";
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      // crosshair
+      ctx.strokeStyle = "#2e3d52";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+      // center ring
+      ctx.strokeStyle = "#3a4f63";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.25, 0, Math.PI * 2);
+      ctx.stroke();
+      // dot
+      const dx = cx + x * r;
+      const dy = cy + y * r;
+      ctx.fillStyle = "#1f7a8c";
+      ctx.beginPath();
+      ctx.arc(dx, dy, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#7ad4e8";
+      ctx.beginPath();
+      ctx.arc(dx, dy, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function updateSwitch(index, val) {
+      const bar = document.getElementById("rc-sw-" + index);
+      if (!bar) return;
+      if (!bar._built) {
+        bar.innerHTML = '<span class="sw-pip" data-pos="-1"></span><span class="sw-pip" data-pos="0"></span><span class="sw-pip" data-pos="1"></span>';
+        bar._built = true;
+      }
+      bar.querySelectorAll(".sw-pip").forEach((pip) => {
+        pip.classList.toggle("active", Number(pip.dataset.pos) === val);
+      });
     }
 
     function rotateImuPoint(x, y, z, rollDeg, pitchDeg, yawDeg) {
@@ -2055,9 +2292,7 @@
 
     function drawImuCube(canvasId, rollDeg, pitchDeg, yawDeg) {
       const canvas = document.getElementById(canvasId);
-      if (!canvas) {
-        return;
-      }
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
       const w = canvas.width;
       const h = canvas.height;
@@ -2065,58 +2300,71 @@
 
       const vertices = [
         [-0.67, -1.0, -0.10], [0.67, -1.0, -0.10], [0.67, 1.0, -0.10], [-0.67, 1.0, -0.10],
-        [-0.67, -1.0, 0.10], [0.67, -1.0, 0.10], [0.67, 1.0, 0.10], [-0.67, 1.0, 0.10],
+        [-0.67, -1.0,  0.10], [0.67, -1.0,  0.10], [0.67, 1.0,  0.10], [-0.67, 1.0,  0.10],
+      ];
+      // each face: [indices, fill, stroke]
+      // front = +Y (indices 2,3,7,6), right = +X (indices 1,2,6,5)
+      const faces = [
+        { idx: [0, 1, 5, 4], fill: null,        stroke: "#1f7a8c" }, // back   -Y
+        { idx: [0, 3, 7, 4], fill: null,        stroke: "#1f7a8c" }, // left   -X
+        { idx: [0, 1, 2, 3], fill: "#1a6aff",   stroke: "#1a6aff" }, // bottom -Z  blue
+        { idx: [4, 5, 6, 7], fill: null,        stroke: "#1f7a8c" }, // top    +Z
+        { idx: [1, 2, 6, 5], fill: "#e02020",   stroke: "#e02020" }, // right  +X  red
+        { idx: [2, 3, 7, 6], fill: "#22b84a",   stroke: "#22b84a" }, // front  +Y  green
       ];
       const edges = [
-        [0, 1], [1, 2], [2, 3], [3, 0],
-        [4, 5], [5, 6], [6, 7], [7, 4],
-        [0, 4], [1, 5], [2, 6], [3, 7],
+        [0,1],[1,2],[2,3],[3,0],
+        [4,5],[5,6],[6,7],[7,4],
+        [0,4],[1,5],[2,6],[3,7],
       ];
-      const projectedFloat = vertices
-        .map(([x, y, z]) => rotateImuPoint(x, y, z, rollDeg, pitchDeg, yawDeg))
-        .map((point) => projectImuPoint(point));
-      const frontFloat = projectImuPoint(rotateImuPoint(0, 1.0, 0, rollDeg, pitchDeg, yawDeg));
-      const upFloat = projectImuPoint(rotateImuPoint(0, 0, 0.75, rollDeg, pitchDeg, yawDeg));
 
-      let minX = Number.POSITIVE_INFINITY;
-      let maxX = Number.NEGATIVE_INFINITY;
-      let minY = Number.POSITIVE_INFINITY;
-      let maxY = Number.NEGATIVE_INFINITY;
-      [...projectedFloat, frontFloat, upFloat].forEach(([px, py]) => {
-        minX = Math.min(minX, px);
-        maxX = Math.max(maxX, px);
-        minY = Math.min(minY, py);
-        maxY = Math.max(maxY, py);
+      const rotated = vertices.map(([x, y, z]) => rotateImuPoint(x, y, z, rollDeg, pitchDeg, yawDeg));
+      const projectedFloat = rotated.map((p) => projectImuPoint(p));
+      const frontFloat = projectImuPoint(rotateImuPoint(0,  1.0, 0,    rollDeg, pitchDeg, yawDeg));
+      const rightFloat = projectImuPoint(rotateImuPoint(0.67, 0, 0,    rollDeg, pitchDeg, yawDeg));
+      const upFloat    = projectImuPoint(rotateImuPoint(0,  0,   0.75, rollDeg, pitchDeg, yawDeg));
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      [...projectedFloat, frontFloat, rightFloat, upFloat].forEach(([px, py]) => {
+        minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+        minY = Math.min(minY, py); maxY = Math.max(maxY, py);
       });
-      const spanX = Math.max(maxX - minX, 0.2);
-      const spanY = Math.max(maxY - minY, 0.2);
       const margin = 8;
-      const scale = Math.min((w - margin * 2) / spanX, (h - margin * 2) / spanY);
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
-      const projected = projectedFloat.map(([px, py]) => [
-        w / 2 + (px - centerX) * scale,
-        h / 2 + (py - centerY) * scale,
-      ]);
-      const front = [
-        w / 2 + (frontFloat[0] - centerX) * scale,
-        h / 2 + (frontFloat[1] - centerY) * scale,
-      ];
-      const up = [
-        w / 2 + (upFloat[0] - centerX) * scale,
-        h / 2 + (upFloat[1] - centerY) * scale,
-      ];
+      const scale = Math.min((w - margin * 2) / Math.max(maxX - minX, 0.2),
+                             (h - margin * 2) / Math.max(maxY - minY, 0.2));
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      const toScreen = ([px, py]) => [w / 2 + (px - cx) * scale, h / 2 + (py - cy) * scale];
 
-      ctx.fillStyle = "rgba(24,58,55,0.18)";
-      ctx.beginPath();
-      ctx.moveTo(projected[0][0], projected[0][1]);
-      ctx.lineTo(projected[1][0], projected[1][1]);
-      ctx.lineTo(projected[5][0], projected[5][1]);
-      ctx.lineTo(projected[4][0], projected[4][1]);
-      ctx.closePath();
-      ctx.fill();
+      const projected = projectedFloat.map(toScreen);
+      const front = toScreen(frontFloat);
+      const right = toScreen(rightFloat);
+      const up    = toScreen(upFloat);
 
-      ctx.lineWidth = 3;
+      // sort colored faces by depth so nearer one wins when two overlap in 2D
+      const azSin = 0.25881905, azCos = 0.96592583, tSin = 0.08715574, tCos = 0.99619470;
+      const faceDepth = (idx) => {
+        let s = 0;
+        idx.forEach((i) => {
+          const [rx, ry, rz] = rotated[i];
+          s += (rx * azSin + ry * azCos) * tCos - rz * tSin;
+        });
+        return s / idx.length;
+      };
+      const coloredFaces = faces.filter((f) => f.fill)
+        .sort((a, b) => faceDepth(a.idx) - faceDepth(b.idx)); // back → front
+
+      // pass 1: colored fills only — non-colored faces have no fill so they never occlude
+      coloredFaces.forEach(({ idx, fill }) => {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(projected[idx[0]][0], projected[idx[0]][1]);
+        for (let k = 1; k < idx.length; k++) ctx.lineTo(projected[idx[k]][0], projected[idx[k]][1]);
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      // pass 2: all edges on top so none get buried under fills
+      ctx.lineWidth = 2;
       ctx.lineCap = "round";
       ctx.strokeStyle = "#1f7a8c";
       edges.forEach(([a, b]) => {
@@ -2126,12 +2374,13 @@
         ctx.stroke();
       });
 
-      drawMarker(ctx, front[0], front[1], "#d67d3e", "F");
-      drawMarker(ctx, up[0], up[1], "#1f7a8c", "U");
+      drawMarker(ctx, front[0], front[1], "#18a040", "F");
+      drawMarker(ctx, right[0], right[1], "#cc2222", "R");
+      drawMarker(ctx, up[0],    up[1],    "#1f7a8c", "U");
     }
 
     function loadAll() {
-      fetch("/api/calibration")
+      fetch("/api/calibration", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
           calibrationData = normalizeCalibrationData(data);
@@ -2142,7 +2391,7 @@
           renderCalibration();
         });
 
-      fetch("/api/gait")
+      fetch("/api/gait", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
           step_height.value = clamp(Number(data.step_height_mm ?? gaitDefaults.step_height_mm), gaitRanges.step_height.min, gaitRanges.step_height.max);
@@ -2154,7 +2403,6 @@
           updateSliderLabels();
         });
 
-      refreshStatus();
       fetchFanStatus();
       fetchImuConfig();
     }
@@ -2164,7 +2412,7 @@
     loadAll();
     setLanguage("zh");
     (function scheduleStatus() {
-      refreshStatus().finally(() => setTimeout(scheduleStatus, 100));
+      refreshStatus().finally(() => setTimeout(scheduleStatus, 1000));
     })();
   </script>
 </body>

@@ -569,6 +569,21 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "fan_tach_ready", fan.tach_ready);
     cJSON_AddNumberToObject(root, "fan_rpm", (double)fan.rpm);
 
+    cJSON_AddNumberToObject(root, "rc_roll", command.roll);
+    cJSON_AddNumberToObject(root, "rc_pitch", command.pitch);
+    cJSON_AddNumberToObject(root, "rc_yaw", command.yaw);
+    cJSON_AddNumberToObject(root, "rc_throttle", command.throttle);
+    cJSON *rc_aux = cJSON_AddArrayToObject(root, "rc_aux");
+    cJSON_AddItemToArray(rc_aux, cJSON_CreateNumber(command.aux_sa));
+    cJSON_AddItemToArray(rc_aux, cJSON_CreateNumber(command.aux_sb));
+    cJSON_AddItemToArray(rc_aux, cJSON_CreateNumber(command.aux_sc));
+    cJSON_AddItemToArray(rc_aux, cJSON_CreateNumber(command.aux_sd));
+    for (int i = 8; i < 12; i++) {
+        int16_t sw = command.raw_channels[i] <= SCARGO_CRSF_SWITCH_LOW ? -1 :
+                     command.raw_channels[i] >= SCARGO_CRSF_SWITCH_HIGH ? 1 : 0;
+        cJSON_AddItemToArray(rc_aux, cJSON_CreateNumber(sw));
+    }
+
     char *json = cJSON_PrintUnformatted(root);
     esp_err_t err = send_json(req, json);
     cJSON_free(json);
@@ -792,6 +807,11 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     return ota_service_handle_upload(req);
 }
 
+static esp_err_t ota_spiffs_post_handler(httpd_req_t *req)
+{
+    return ota_service_handle_spiffs_upload(req);
+}
+
 static esp_err_t log_get_handler(httpd_req_t *req)
 {
     char query_buf[32] = "";
@@ -875,7 +895,7 @@ void web_ui_start(system_config_t *config)
     wifi_config_start();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    server_config.max_uri_handlers = 23;
+    server_config.max_uri_handlers = 24;
     server_config.recv_wait_timeout = 30;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
@@ -1020,6 +1040,12 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &ota_post));
+    httpd_uri_t ota_spiffs_post = {
+        .uri = "/api/ota/spiffs",
+        .method = HTTP_POST,
+        .handler = ota_spiffs_post_handler,
+    };
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &ota_spiffs_post));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &log_get));
 
     httpd_uri_t wifi_get = {
