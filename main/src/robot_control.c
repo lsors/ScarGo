@@ -31,6 +31,8 @@ static const float SCARGO_WALK_REFERENCE_PHASE = 0.75f;
 typedef enum {
     ROBOT_POSTURE_STAND = 0,
     ROBOT_POSTURE_LIE = 1,
+    ROBOT_POSTURE_DIAGONAL_A = 2,  // FR(0)+RL(3) 着地，FL(1)+RR(2) 抬起
+    ROBOT_POSTURE_DIAGONAL_B = 3,  // FL(1)+RR(2) 着地，FR(0)+RL(3) 抬起
 } robot_posture_t;
 
 typedef enum {
@@ -90,6 +92,7 @@ static void log_all_calf_outputs(const char *label,
 }
 static bool s_servo_enabled;
 static int16_t s_last_aux_sa;
+static int16_t s_last_aux_sc;
 static int16_t s_last_aux_sd;
 static float s_calibration_start_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
 static float s_calibration_target_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
@@ -658,7 +661,9 @@ static void solve_and_apply_feet(const vec3f_t feet_world[SCARGO_LEG_COUNT], flo
     }
 }
 
-static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
+static void apply_balance_impl(body_pose_t *pose, const attitude_state_t *attitude,
+                               float kp_roll, float ki_roll, float kd_roll,
+                               float kp_pitch, float ki_pitch, float kd_pitch)
 {
     if (!s_config.imu.balance_enabled || !attitude->ready) {
         return;
@@ -674,15 +679,91 @@ static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
     float roll_derivative = (roll_error - s_prev_roll_error) / dt;
     float pitch_derivative = (pitch_error - s_prev_pitch_error) / dt;
 
-    pose->roll_deg += roll_error * SCARGO_BALANCE_KP_ROLL +
-                      s_roll_integral * SCARGO_BALANCE_KI_ROLL +
-                      roll_derivative * SCARGO_BALANCE_KD_ROLL;
-    pose->pitch_deg += pitch_error * SCARGO_BALANCE_KP_PITCH +
-                       s_pitch_integral * SCARGO_BALANCE_KI_PITCH +
-                       pitch_derivative * SCARGO_BALANCE_KD_PITCH;
+    pose->roll_deg += roll_error * kp_roll + s_roll_integral * ki_roll + roll_derivative * kd_roll;
+    pose->pitch_deg += pitch_error * kp_pitch + s_pitch_integral * ki_pitch + pitch_derivative * kd_pitch;
 
     s_prev_roll_error = roll_error;
     s_prev_pitch_error = pitch_error;
+}
+
+static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
+{
+    apply_balance_impl(pose, attitude,
+                       SCARGO_BALANCE_KP_ROLL, SCARGO_BALANCE_KI_ROLL, SCARGO_BALANCE_KD_ROLL,
+                       SCARGO_BALANCE_KP_PITCH, SCARGO_BALANCE_KI_PITCH, SCARGO_BALANCE_KD_PITCH);
+}
+
+static void apply_balance_diagonal(body_pose_t *pose, const attitude_state_t *attitude)
+{
+    apply_balance_impl(pose, attitude,
+                       SCARGO_DIAG_BALANCE_KP_ROLL, SCARGO_DIAG_BALANCE_KI_ROLL, SCARGO_DIAG_BALANCE_KD_ROLL,
+                       SCARGO_DIAG_BALANCE_KP_PITCH, SCARGO_DIAG_BALANCE_KI_PITCH, SCARGO_DIAG_BALANCE_KD_PITCH);
+}
+
+static const bool s_diagonal_pair_a_support[SCARGO_LEG_COUNT] = {
+    [SCARGO_LEG_FRONT_RIGHT] = true,
+    [SCARGO_LEG_FRONT_LEFT]  = false,
+    [SCARGO_LEG_REAR_RIGHT]  = false,
+    [SCARGO_LEG_REAR_LEFT]   = true,
+};
+static const bool s_diagonal_pair_b_support[SCARGO_LEG_COUNT] = {
+    [SCARGO_LEG_FRONT_RIGHT] = false,
+    [SCARGO_LEG_FRONT_LEFT]  = true,
+    [SCARGO_LEG_REAR_RIGHT]  = true,
+    [SCARGO_LEG_REAR_LEFT]   = false,
+};
+
+static void begin_diagonal_stand_transition(robot_posture_t posture)
+{
+    const bool *support = (posture == ROBOT_POSTURE_DIAGONAL_A) ? s_diagonal_pair_a_support : s_diagonal_pair_b_support;
+    float step_height = s_config.gait.step_height_mm;
+    vec3f_t target_feet[SCARGO_LEG_COUNT];
+
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        target_feet[leg] = s_default_feet_world[leg];
+        if (!support[leg]) {
+            target_feet[leg].z_mm = step_height;
+        }
+    }
+    s_roll_integral = 0.0f;
+    s_pitch_integral = 0.0f;
+    s_prev_roll_error = 0.0f;
+    s_prev_pitch_error = 0.0f;
+    begin_posture_transition(posture, s_current_height_mm, target_feet, &(body_pose_t){0}, 0.0f);
+}
+
+// 对角腿站立模式控制。
+//
+// 着地腿：固定在默认世界坐标脚点（z=0）
+// 抬起腿：保持在步态抬腿高度（z=step_height_mm）
+// 姿态：不跟随遥控摇杆，完全由 IMU PID 管控
+// 高度：由油门控制
+static void apply_diagonal_stand_pose(const rc_command_t *command, const attitude_state_t *attitude)
+{
+    const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
+    const float height_speed_mm_s = motion_speed_mm_s(s_motion_speed);
+    const bool *support = (s_posture == ROBOT_POSTURE_DIAGONAL_A) ? s_diagonal_pair_a_support : s_diagonal_pair_b_support;
+    float step_height = s_config.gait.step_height_mm;
+    float target_height = body_height_from_throttle(command);
+
+    fill_mid_pose(s_target_angles);
+    s_current_height_mm = move_towards(s_current_height_mm, target_height, height_speed_mm_s * dt_s);
+
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        if (support[leg]) {
+            s_current_feet_world[leg].x_mm = s_default_feet_world[leg].x_mm;
+            s_current_feet_world[leg].y_mm = s_default_feet_world[leg].y_mm;
+            s_current_feet_world[leg].z_mm = 0.0f;
+        } else {
+            s_current_feet_world[leg].x_mm = s_default_feet_world[leg].x_mm;
+            s_current_feet_world[leg].y_mm = s_default_feet_world[leg].y_mm;
+            s_current_feet_world[leg].z_mm = step_height;
+        }
+    }
+
+    body_pose_t solved_pose = s_current_body_pose;
+    apply_balance_diagonal(&solved_pose, attitude);
+    solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
 // 站立模式控制。
@@ -1016,6 +1097,7 @@ void robot_control_init(const system_config_t *config)
     s_log_calibration_exit_once = false;
     s_log_stand_takeover_once = false;
     s_last_aux_sa = 0;
+    s_last_aux_sc = 0;
     s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
     servo_output_init(&config->calibration);
@@ -1315,6 +1397,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             apply_stand_pose(&hold_command, attitude);
             update_fan_auto_context(command->link_up);
             s_last_aux_sa = command->aux_sa;
+            s_last_aux_sc = command->aux_sc;
             s_last_aux_sd = command->aux_sd;
             xSemaphoreGiveRecursive(s_state_mutex);
             return;
@@ -1379,9 +1462,42 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
         update_fan_auto_context(command->link_up);
+        s_last_aux_sc = command->aux_sc;
         s_last_aux_sd = command->aux_sd;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
+    }
+
+    /*
+     * SC 三档控制对角腿站立模式：
+     * - sc = -1 : Pair A（FR+RL 着地，FL+RR 抬起）
+     * - sc =  0 : 普通站立（退出对角腿）
+     * - sc = +1 : Pair B（FL+RR 着地，FR+RL 抬起）
+     *
+     * 只在站立模式、非行走、非标定时生效。
+     * 切换时只响应边沿，避免持续触发。
+     */
+    if (!command->walk_mode && s_mode != ROBOT_MODE_WALK && command->aux_sc != s_last_aux_sc) {
+        if (command->aux_sc == -1) {
+            if (s_posture != ROBOT_POSTURE_DIAGONAL_A) {
+                begin_diagonal_stand_transition(ROBOT_POSTURE_DIAGONAL_A);
+                ESP_LOGI(TAG, "SC: enter diagonal A (FR+RL)");
+            }
+        } else if (command->aux_sc == 1) {
+            if (s_posture != ROBOT_POSTURE_DIAGONAL_B) {
+                begin_diagonal_stand_transition(ROBOT_POSTURE_DIAGONAL_B);
+                ESP_LOGI(TAG, "SC: enter diagonal B (FL+RR)");
+            }
+        } else {
+            if (s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B) {
+                begin_posture_transition(ROBOT_POSTURE_STAND,
+                                         body_height_from_throttle(command),
+                                         s_default_feet_world,
+                                         &(body_pose_t){0},
+                                         0.0f);
+                ESP_LOGI(TAG, "SC: exit diagonal, return to stand");
+            }
+        }
     }
 
     if (!command->walk_mode) {
@@ -1454,7 +1570,8 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
 
     if (command->walk_mode) {
-        if (s_posture == ROBOT_POSTURE_LIE) {
+        if (s_posture == ROBOT_POSTURE_LIE ||
+            s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B) {
             begin_posture_transition(ROBOT_POSTURE_STAND,
                                      body_height_from_throttle(command),
                                      s_default_feet_world,
@@ -1477,6 +1594,8 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
 
     if (s_posture == ROBOT_POSTURE_LIE && !s_transition_active && s_mode == ROBOT_MODE_STAND) {
         apply_lie_hold_pose();
+    } else if ((s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B) && !s_transition_active) {
+        apply_diagonal_stand_pose(command, attitude);
     } else if (s_mode == ROBOT_MODE_STAND || s_walk_phase == WALK_PHASE_IDLE) {
         apply_stand_pose(command, attitude);
     } else {
@@ -1519,6 +1638,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
 
     s_last_aux_sa = command->aux_sa;
+    s_last_aux_sc = command->aux_sc;
     s_last_aux_sd = command->aux_sd;
     xSemaphoreGiveRecursive(s_state_mutex);
 }

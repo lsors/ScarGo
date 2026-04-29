@@ -11,6 +11,7 @@ sdkconfig.old
 # IDE / local tool configs (platform-specific)
 .vscode/
 .claude/
+.cache/
 
 # Python caches
 __pycache__/
