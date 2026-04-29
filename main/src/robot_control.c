@@ -207,26 +207,37 @@ static vec3f_t lerp_vec3(vec3f_t a, vec3f_t b, float t)
     };
 }
 
-static vec3f_t body_foot_to_world(scargo_leg_id_t leg, vec3f_t foot_body, float stand_height_mm, const body_pose_t *pose)
+// 腿坐标 → 世界坐标（kinematics_apply_body_pose 的完整逆变换）。
+//
+// 步骤：
+//   1. 加髋关节偏移 → 身体中心坐标（机身轴对齐）
+//   2. 正向旋转（roll→pitch→yaw）→ 身体中心坐标（世界轴对齐）
+//   3. 加身体中心在世界中的位置（offset_x/y + stand_height）→ 世界坐标
+static vec3f_t body_foot_to_world(scargo_leg_id_t leg, vec3f_t foot_leg, float stand_height_mm, const body_pose_t *pose)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
     const vec3f_t hip_offsets[SCARGO_LEG_COUNT] = {
-        [SCARGO_LEG_FRONT_RIGHT] = {.x_mm = -half_width, .y_mm = half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_FRONT_LEFT] = {.x_mm = half_width, .y_mm = half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_REAR_RIGHT] = {.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_REAR_LEFT] = {.x_mm = half_width, .y_mm = -half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_FRONT_RIGHT] = {.x_mm = -half_width, .y_mm =  half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_FRONT_LEFT]  = {.x_mm =  half_width, .y_mm =  half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_RIGHT]  = {.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_LEFT]   = {.x_mm =  half_width, .y_mm = -half_length, .z_mm = 0.0f},
     };
 
-    vec3f_t relative = rotate_x_local(foot_body, deg2rad_local(pose->roll_deg));
-    relative = rotate_y_local(relative, deg2rad_local(pose->pitch_deg));
-    relative = rotate_z_local(relative, deg2rad_local(pose->yaw_deg));
+    vec3f_t from_center = {
+        .x_mm = foot_leg.x_mm + hip_offsets[leg].x_mm,
+        .y_mm = foot_leg.y_mm + hip_offsets[leg].y_mm,
+        .z_mm = foot_leg.z_mm + hip_offsets[leg].z_mm,
+    };
+    vec3f_t p = rotate_x_local(from_center, deg2rad_local(pose->roll_deg));
+    p = rotate_y_local(p, deg2rad_local(pose->pitch_deg));
+    p = rotate_z_local(p, deg2rad_local(pose->yaw_deg));
 
     return (vec3f_t){
-        .x_mm = relative.x_mm + hip_offsets[leg].x_mm,
-        .y_mm = relative.y_mm + hip_offsets[leg].y_mm,
-        .z_mm = relative.z_mm + stand_height_mm + hip_offsets[leg].z_mm,
+        .x_mm = p.x_mm + pose->offset_x_mm,
+        .y_mm = p.y_mm + pose->offset_y_mm,
+        .z_mm = p.z_mm + stand_height_mm,
     };
 }
 

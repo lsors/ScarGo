@@ -124,41 +124,62 @@ void kinematics_rest_feet(vec3f_t feet_body[SCARGO_LEG_COUNT], float reference_h
     feet_body[SCARGO_LEG_REAR_LEFT]   = (vec3f_t){.x_mm =  (half_width + spread), .y_mm = -half_length, .z_mm = 0.0f};
 }
 
-// 把“世界坐标中的足端位置”转换到机身局部坐标。
+// 世界坐标 → 身体中心坐标（第一步：纯平移）。
 //
-// 约定：
-// 1. feet_world      : 地面参考系下的足端点
-// 2. stand_height_mm : 身体中心相对地面的高度
-// 3. pose            : 机身姿态
+// 身体中心在世界坐标中的位置：
+//   (pose->offset_x_mm, pose->offset_y_mm, stand_height_mm)
 //
-// 转换过程：
-// - 先减去对应髋关节的平移偏置
-// - 再按 yaw/pitch/roll 的逆变换把点转回机身坐标
-void kinematics_apply_body_pose(vec3f_t feet_body[SCARGO_LEG_COUNT], const vec3f_t feet_world[SCARGO_LEG_COUNT],
-                                float stand_height_mm, const body_pose_t *pose)
+// 输出：足端相对身体中心的向量，轴方向仍与世界对齐（未施加任何旋转）。
+void kinematics_world_to_body(vec3f_t feet_body_center[SCARGO_LEG_COUNT],
+                               const vec3f_t feet_world[SCARGO_LEG_COUNT],
+                               float stand_height_mm, const body_pose_t *pose)
+{
+    for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
+        feet_body_center[leg] = (vec3f_t){
+            .x_mm = feet_world[leg].x_mm - pose->offset_x_mm,
+            .y_mm = feet_world[leg].y_mm - pose->offset_y_mm,
+            .z_mm = feet_world[leg].z_mm - stand_height_mm,
+        };
+    }
+}
+
+// 身体中心坐标 → 腿坐标（第二步：逆旋转 + 减髋关节偏移）。
+//
+// 旋转顺序（逆向）：先逆 yaw，再逆 pitch，再逆 roll。
+// 这与 body_foot_to_world() 的正向顺序（roll→pitch→yaw）互为逆变换。
+void kinematics_body_to_leg(vec3f_t feet_leg[SCARGO_LEG_COUNT],
+                             const vec3f_t feet_body_center[SCARGO_LEG_COUNT],
+                             const body_pose_t *pose)
 {
     const scargo_mechanics_t *mech = board_defaults_mechanics();
     const float half_width = mech->body_width_mm * 0.5f;
     const float half_length = mech->body_length_mm * 0.5f;
     const vec3f_t hip_offsets[SCARGO_LEG_COUNT] = {
-        [SCARGO_LEG_FRONT_RIGHT] = {.x_mm = -half_width, .y_mm = half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_FRONT_LEFT] = {.x_mm = half_width, .y_mm = half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_REAR_RIGHT] = {.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f},
-        [SCARGO_LEG_REAR_LEFT] = {.x_mm = half_width, .y_mm = -half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_FRONT_RIGHT] = {.x_mm = -half_width, .y_mm =  half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_FRONT_LEFT]  = {.x_mm =  half_width, .y_mm =  half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_RIGHT]  = {.x_mm = -half_width, .y_mm = -half_length, .z_mm = 0.0f},
+        [SCARGO_LEG_REAR_LEFT]   = {.x_mm =  half_width, .y_mm = -half_length, .z_mm = 0.0f},
     };
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
-        vec3f_t relative = {
-            .x_mm = feet_world[leg].x_mm - hip_offsets[leg].x_mm,
-            .y_mm = feet_world[leg].y_mm - hip_offsets[leg].y_mm,
-            .z_mm = feet_world[leg].z_mm - stand_height_mm - hip_offsets[leg].z_mm,
+        vec3f_t p = rotate_z(feet_body_center[leg], -deg2rad(pose->yaw_deg));
+        p = rotate_y(p, -deg2rad(pose->pitch_deg));
+        p = rotate_x(p, -deg2rad(pose->roll_deg));
+        feet_leg[leg] = (vec3f_t){
+            .x_mm = p.x_mm - hip_offsets[leg].x_mm,
+            .y_mm = p.y_mm - hip_offsets[leg].y_mm,
+            .z_mm = p.z_mm - hip_offsets[leg].z_mm,
         };
-
-        relative = rotate_z(relative, -deg2rad(pose->yaw_deg));
-        relative = rotate_y(relative, -deg2rad(pose->pitch_deg));
-        relative = rotate_x(relative, -deg2rad(pose->roll_deg));
-        feet_body[leg] = relative;
     }
+}
+
+// 便捷接口：世界坐标一步到腿坐标。
+void kinematics_apply_body_pose(vec3f_t feet_leg[SCARGO_LEG_COUNT], const vec3f_t feet_world[SCARGO_LEG_COUNT],
+                                float stand_height_mm, const body_pose_t *pose)
+{
+    vec3f_t feet_body_center[SCARGO_LEG_COUNT];
+    kinematics_world_to_body(feet_body_center, feet_world, stand_height_mm, pose);
+    kinematics_body_to_leg(feet_leg, feet_body_center, pose);
 }
 
 // 舵机角 -> 安装层关节角。

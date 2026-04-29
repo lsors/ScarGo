@@ -47,14 +47,24 @@ typedef struct {
     float z_mm;
 } vec3f_t;
 
-// 机身姿态定义：
-// roll  : 绕机身 Y 轴转动
-// pitch : 绕机身 X 轴转动
-// yaw   : 绕机身 Z 轴转动
+// 机身位姿：旋转 + 身体中心在世界 XY 方向的平移偏移。
+//
+// 旋转语义：
+//   roll  : 绕机身 Y 轴（左右翻滚）
+//   pitch : 绕机身 X 轴（前后俯仰）
+//   yaw   : 绕机身 Z 轴（偏航）
+//
+// 平移语义（脚点固定在世界坐标时）：
+//   offset_x_mm : 身体中心相对默认位置的 X 偏移（正值向左侧移）
+//   offset_y_mm : 身体中心相对默认位置的 Y 偏移（正值向前移）
+//
+// 零初始化 (body_pose_t){0} 等价于"无旋转、无平移"，与旧代码完全兼容。
 typedef struct {
     float roll_deg;
     float pitch_deg;
     float yaw_deg;
+    float offset_x_mm;
+    float offset_y_mm;
 } body_pose_t;
 
 // 舵机层姿态。
@@ -94,9 +104,27 @@ void kinematics_default_feet(vec3f_t feet_body[SCARGO_LEG_COUNT], float stand_he
 // 当前实现中，x/y 与标准站立共用，只通过高度变化产生主要的 z 方向动作。
 void kinematics_rest_feet(vec3f_t feet_body[SCARGO_LEG_COUNT], float reference_height_mm);
 
-// 将“世界坐标系中的足端点”转换为“单腿坐标系/机身局部坐标中的足端点”。
-// 后续所有单腿逆解都基于 feet_body 来完成。
-void kinematics_apply_body_pose(vec3f_t feet_body[SCARGO_LEG_COUNT], const vec3f_t feet_world[SCARGO_LEG_COUNT],
+// 世界坐标 → 身体中心坐标（第一步：纯平移）。
+//
+// 输出 feet_body_center：足端相对身体中心的位置，轴方向仍与世界对齐（未旋转）。
+// 身体中心在世界坐标中的位置由 stand_height_mm 和 pose->offset_x/y_mm 共同确定。
+//
+// 调用方可在此输出上插入自定义的身体坐标变换（如重心偏移、步态调制），
+// 再调用 kinematics_body_to_leg() 进入腿坐标完成逆解。
+void kinematics_world_to_body(vec3f_t feet_body_center[SCARGO_LEG_COUNT],
+                               const vec3f_t feet_world[SCARGO_LEG_COUNT],
+                               float stand_height_mm, const body_pose_t *pose);
+
+// 身体中心坐标 → 腿坐标（第二步：逆旋转 + 减髋关节偏移）。
+//
+// 输入 feet_body_center：足端相对身体中心，世界轴对齐（kinematics_world_to_body 的输出）。
+// 输出 feet_leg：足端相对各腿髋关节原点，机身轴对齐，可直接送入 kinematics_solve_leg_geometry()。
+void kinematics_body_to_leg(vec3f_t feet_leg[SCARGO_LEG_COUNT],
+                             const vec3f_t feet_body_center[SCARGO_LEG_COUNT],
+                             const body_pose_t *pose);
+
+// 便捷接口：一步完成世界坐标 → 腿坐标（内部依次调用上面两步）。
+void kinematics_apply_body_pose(vec3f_t feet_leg[SCARGO_LEG_COUNT], const vec3f_t feet_world[SCARGO_LEG_COUNT],
                                 float stand_height_mm, const body_pose_t *pose);
 
 // 舵机角 -> 机械关节角。
