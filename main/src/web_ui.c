@@ -251,6 +251,21 @@ static esp_err_t root_handler(httpd_req_t *req)
         return httpd_resp_send(req, FALLBACK_HTML, HTTPD_RESP_USE_STRLEN);
     }
 
+    /* ETag = 文件字节数，用于浏览器协商缓存；Cache-Control: no-cache 让浏览器
+     * 每次都先验证，文件未变化时返回 304 Not Modified，跳过 98KB 重传。 */
+    char etag[24];
+    snprintf(etag, sizeof(etag), "\"%zu\"", html_size);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    httpd_resp_set_hdr(req, "ETag", etag);
+
+    char if_none_match[32] = {0};
+    if (httpd_req_get_hdr_value_str(req, "If-None-Match", if_none_match, sizeof(if_none_match)) == ESP_OK
+        && strcmp(if_none_match, etag) == 0) {
+        free(html);
+        httpd_resp_set_status(req, "304 Not Modified");
+        return httpd_resp_send(req, NULL, 0);
+    }
+
     esp_err_t err = httpd_resp_send(req, html, (ssize_t)html_size);
     free(html);
     return err;

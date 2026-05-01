@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ScarGo Control</title>
   <style>
+    body { visibility: hidden; }
     :root {
       --bg: #f3ede2;
       --ink: #152126;
@@ -1009,7 +1010,7 @@
   <script>
     let calibrationData = { legs: [] };
     let activeLeg = 0;
-    let currentLang = "en";
+    let currentLang = localStorage.getItem("scargo_lang") || "zh";
     let activePage = "calibration";
     let calibrationRunning = false;
     let s_imuPreviewOn = false;
@@ -1401,6 +1402,7 @@
 
     function setLanguage(lang) {
       currentLang = lang;
+      localStorage.setItem("scargo_lang", lang);
       document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
       document.getElementById("lang-en").classList.toggle("active", lang === "en");
       document.getElementById("lang-zh").classList.toggle("active", lang === "zh");
@@ -2410,7 +2412,8 @@
     applyRangeConfig();
     bindSliderEvents();
     loadAll();
-    setLanguage("zh");
+    setLanguage(currentLang);
+    document.body.style.visibility = "visible";
     (function scheduleStatus() {
       refreshStatus().finally(() => setTimeout(scheduleStatus, 1000));
     })();
