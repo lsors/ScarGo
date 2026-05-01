@@ -3,9 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// 蜂鸣器单步时序：on_ms 毫秒鸣叫，off_ms 毫秒静音，循环拼接成完整音效
 typedef struct {
-    uint16_t on_ms;
-    uint16_t off_ms;
+    uint16_t on_ms;    // 鸣叫持续时间（ms）
+    uint16_t off_ms;   // 静音持续时间（ms）
 } buzzer_beep_step_t;
 
 void buzzer_service_init(void);
