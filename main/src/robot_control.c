@@ -473,6 +473,15 @@ static float walk_step_height_from_throttle(const rc_command_t *command)
     return lerpf(s_config.gait.step_height_min_mm, s_config.gait.step_height_max_mm, ratio);
 }
 
+/* 站立模式最大 yaw 角随高度线性缩放：
+ * 低姿态时腿的展开角小，yaw 过大会让腿互相干涉导致堵转；
+ * 高姿态时腿有足够展开空间，允许更大偏航。 */
+static float dynamic_max_yaw_deg(const rc_command_t *command)
+{
+    float ratio = body_height_ratio_from_throttle(command);
+    return lerpf(SCARGO_MAX_BODY_YAW_DEG_LOW, s_config.gait.max_body_yaw_deg, ratio);
+}
+
 static body_pose_t move_pose_towards(body_pose_t current, body_pose_t target, float max_delta_deg)
 {
     current.roll_deg = move_towards(current.roll_deg, target.roll_deg, max_delta_deg);
@@ -571,7 +580,7 @@ static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_m
 
     if (mode == ROBOT_MODE_STAND) {
         target.height_mm = body_height_from_throttle(command);
-        target.yaw_deg = command->yaw * s_config.gait.max_body_yaw_deg;
+        target.yaw_deg = command->yaw * dynamic_max_yaw_deg(command);
         // 站立模式下取消 SB 对姿态控制的分支影响。
         // 右摇杆映射：
         // - yaw   -> 左摇杆左右：机身绕 z 轴旋转（±45°）
@@ -1346,7 +1355,7 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     bool walk_mode = command->walk_mode || s_mode == ROBOT_MODE_WALK;
     robot_target_pose_t target = {
-        .yaw_deg = walk_mode ? 0.0f : command->yaw * s_config.gait.max_body_yaw_deg,
+        .yaw_deg = walk_mode ? 0.0f : command->yaw * dynamic_max_yaw_deg(command),
         .pitch_deg = 0.0f,
         .roll_deg = 0.0f,
         .height_mm = body_height_from_throttle(command),

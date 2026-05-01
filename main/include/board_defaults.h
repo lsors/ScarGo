@@ -50,9 +50,10 @@
 // diagonal_phase_offset: 对角步态中后对角腿相对前对角腿的相位偏移（0 = 标准同步）
 #define SCARGO_DEFAULT_PHASE_OFFSET  0.0f
 // 站立模式遥控可调范围（度）
-#define SCARGO_MAX_BODY_YAW_DEG   45.0f   // 机身绕 Z 轴最大偏航（左摇杆左右）
-#define SCARGO_MAX_BODY_ROLL_DEG  20.0f   // 机身绕 Y 轴最大横滚（右摇杆左右）
-#define SCARGO_MAX_BODY_PITCH_DEG 20.0f   // 机身绕 X 轴最大俯仰（右摇杆上下）
+#define SCARGO_MAX_BODY_YAW_DEG          45.0f   // 机身绕 Z 轴最大偏航（最高高度时，左摇杆左右）
+#define SCARGO_MAX_BODY_YAW_DEG_LOW      15.0f   // 机身最低高度时的最大偏航（防止低姿态下舵机干涉堵转）
+#define SCARGO_MAX_BODY_ROLL_DEG         20.0f   // 机身绕 Y 轴最大横滚（右摇杆左右）
+#define SCARGO_MAX_BODY_PITCH_DEG        20.0f   // 机身绕 X 轴最大俯仰（右摇杆上下）
 
 // ── 系统配置 ──────────────────────────────────────────────────────────────────
 #define SCARGO_CPU_FREQ_MHZ        240              // ESP32 CPU 主频（MHz）
