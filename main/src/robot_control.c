@@ -861,7 +861,7 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
 {
     kinematics_default_feet(feet_world, stand_height);
     const float step_vec_y = clampf_local(command->pitch, -1.0f, 1.0f) * stride;
-    const float step_vec_x = clampf_local(command->roll, -1.0f, 1.0f) * stride;
+    const float step_vec_x = -clampf_local(command->roll, -1.0f, 1.0f) * stride;
     const float yaw_diff_y = clampf_local(command->yaw, -1.0f, 1.0f) * stride * 0.5f;
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
