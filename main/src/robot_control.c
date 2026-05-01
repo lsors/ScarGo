@@ -214,7 +214,7 @@ static vec3f_t lerp_vec3(vec3f_t a, vec3f_t b, float t)
 //
 // 步骤：
 //   1. 加髋关节偏移 → 身体中心坐标（机身轴对齐）
-//   2. 正向旋转（roll→pitch→yaw）→ 身体中心坐标（世界轴对齐）
+//   2. 正向旋转（roll(Y)→pitch(X)→yaw(Z)）→ 身体中心坐标（世界轴对齐）
 //   3. 加身体中心在世界中的位置（offset_x/y + stand_height）→ 世界坐标
 static vec3f_t body_foot_to_world(scargo_leg_id_t leg, vec3f_t foot_leg, float stand_height_mm, const body_pose_t *pose)
 {
@@ -233,8 +233,8 @@ static vec3f_t body_foot_to_world(scargo_leg_id_t leg, vec3f_t foot_leg, float s
         .y_mm = foot_leg.y_mm + hip_offsets[leg].y_mm,
         .z_mm = foot_leg.z_mm + hip_offsets[leg].z_mm,
     };
-    vec3f_t p = rotate_x_local(from_center, deg2rad_local(pose->roll_deg));
-    p = rotate_y_local(p, deg2rad_local(pose->pitch_deg));
+    vec3f_t p = rotate_y_local(from_center, deg2rad_local(pose->roll_deg));
+    p = rotate_x_local(p, deg2rad_local(pose->pitch_deg));
     p = rotate_z_local(p, deg2rad_local(pose->yaw_deg));
 
     return (vec3f_t){
@@ -571,14 +571,14 @@ static robot_target_pose_t make_target_pose(const rc_command_t *command, robot_m
 
     if (mode == ROBOT_MODE_STAND) {
         target.height_mm = body_height_from_throttle(command);
-        target.yaw_deg = -command->yaw * s_config.gait.max_body_yaw_deg;
+        target.yaw_deg = command->yaw * s_config.gait.max_body_yaw_deg;
         // 站立模式下取消 SB 对姿态控制的分支影响。
-        // 当前统一语义：
-        // - yaw   -> 机身绕 z 轴旋转（±45°）
-        // - pitch -> 机身绕 x 轴旋转
-        // - roll  -> 机身绕 y 轴旋转
-        target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
-        target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
+        // 右摇杆映射：
+        // - yaw   -> 左摇杆左右：机身绕 z 轴旋转（±45°）
+        // - roll  -> 右摇杆左右：机身横滚倾斜
+        // - pitch -> 右摇杆上下：机身俯仰倾斜
+        target.roll_deg = -command->roll * s_config.gait.max_body_roll_deg;
+        target.pitch_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
         return target;
     }
 
@@ -1346,14 +1346,14 @@ robot_target_pose_t robot_control_get_target_pose(const rc_command_t *command)
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     bool walk_mode = command->walk_mode || s_mode == ROBOT_MODE_WALK;
     robot_target_pose_t target = {
-        .yaw_deg = walk_mode ? 0.0f : -command->yaw * s_config.gait.max_body_yaw_deg,
+        .yaw_deg = walk_mode ? 0.0f : command->yaw * s_config.gait.max_body_yaw_deg,
         .pitch_deg = 0.0f,
         .roll_deg = 0.0f,
         .height_mm = body_height_from_throttle(command),
     };
     if (!walk_mode) {
-        target.roll_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
-        target.pitch_deg = command->roll * s_config.gait.max_body_roll_deg;
+        target.roll_deg = -command->roll * s_config.gait.max_body_roll_deg;
+        target.pitch_deg = -command->pitch * s_config.gait.max_body_pitch_deg;
     }
     xSemaphoreGiveRecursive(s_state_mutex);
     return target;

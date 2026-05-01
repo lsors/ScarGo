@@ -145,8 +145,8 @@ void kinematics_world_to_body(vec3f_t feet_body_center[SCARGO_LEG_COUNT],
 
 // 身体中心坐标 → 腿坐标（第二步：逆旋转 + 减髋关节偏移）。
 //
-// 旋转顺序（逆向）：先逆 yaw，再逆 pitch，再逆 roll。
-// 这与 body_foot_to_world() 的正向顺序（roll→pitch→yaw）互为逆变换。
+// 旋转顺序（逆向）：先逆 yaw，再逆 pitch（X轴），再逆 roll（Y轴）。
+// 这与 body_foot_to_world() 的正向顺序（roll(Y)→pitch(X)→yaw(Z)）互为逆变换。
 void kinematics_body_to_leg(vec3f_t feet_leg[SCARGO_LEG_COUNT],
                              const vec3f_t feet_body_center[SCARGO_LEG_COUNT],
                              const body_pose_t *pose)
@@ -163,8 +163,8 @@ void kinematics_body_to_leg(vec3f_t feet_leg[SCARGO_LEG_COUNT],
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
         vec3f_t p = rotate_z(feet_body_center[leg], -deg2rad(pose->yaw_deg));
-        p = rotate_y(p, -deg2rad(pose->pitch_deg));
-        p = rotate_x(p, -deg2rad(pose->roll_deg));
+        p = rotate_x(p, -deg2rad(pose->pitch_deg));
+        p = rotate_y(p, -deg2rad(pose->roll_deg));
         feet_leg[leg] = (vec3f_t){
             .x_mm = p.x_mm - hip_offsets[leg].x_mm,
             .y_mm = p.y_mm - hip_offsets[leg].y_mm,
