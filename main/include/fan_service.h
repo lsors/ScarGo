@@ -30,4 +30,7 @@ void fan_service_set_motion_mode(bool walk_mode);
 void fan_service_set_at_min_height(bool at_min_height);
 void fan_service_set_manual_level(fan_speed_level_t level);
 void fan_service_clear_manual_override(void);
+// 站立模式下的高度比例（0.0 = 最低高度，1.0 = 最高高度）。
+// 风扇在站立模式下按此比例在 LOW~MEDIUM 之间线性插值占空比。
+void fan_service_set_stand_height_ratio(float ratio);
 fan_status_t fan_service_get_status(void);

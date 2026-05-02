@@ -22,6 +22,7 @@ static const char *TAG = "fan";
 
 static fan_status_t s_status;
 static bool s_ready;
+static float s_stand_height_ratio;
 static volatile uint32_t s_tach_edge_count;
 static uint32_t s_last_tach_edge_count;
 static TickType_t s_last_sample_tick;
@@ -74,7 +75,19 @@ static void apply_effective_level(void)
         return;
     }
 
-    uint32_t duty = fan_level_to_duty(level);
+    uint32_t duty;
+    if (s_status.manual_override || s_status.walk_mode ||
+        !s_status.rc_link_up || s_status.at_min_height) {
+        duty = fan_level_to_duty(level);
+    } else {
+        /* 站立模式：按高度比例在 LOW~MEDIUM duty 间线性插值 */
+        const uint32_t low_duty    = (SCARGO_FAN_PWM_MAX_DUTY * 35U) / 100U;
+        const uint32_t medium_duty = (SCARGO_FAN_PWM_MAX_DUTY * 60U) / 100U;
+        float r = s_stand_height_ratio < 0.0f ? 0.0f
+                : s_stand_height_ratio > 1.0f ? 1.0f
+                : s_stand_height_ratio;
+        duty = low_duty + (uint32_t)(r * (float)(medium_duty - low_duty));
+    }
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1));
 
@@ -247,6 +260,12 @@ void fan_service_set_manual_level(fan_speed_level_t level)
 void fan_service_clear_manual_override(void)
 {
     s_status.manual_override = false;
+    apply_effective_level();
+}
+
+void fan_service_set_stand_height_ratio(float ratio)
+{
+    s_stand_height_ratio = ratio;
     apply_effective_level();
 }
 

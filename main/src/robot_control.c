@@ -136,9 +136,13 @@ static void update_fan_auto_context(bool rc_link_up)
     float stand_height_range_mm = s_config.gait.stand_height_max_mm - s_config.gait.stand_height_min_mm;
     float fan_off_band_mm = fmaxf(1.0f, stand_height_range_mm * 0.05f);
     bool at_min_height = !walk_mode && s_current_height_mm <= (s_config.gait.stand_height_min_mm + fan_off_band_mm);
+    float height_ratio = (stand_height_range_mm > 1.0f)
+        ? clampf_local((s_current_height_mm - s_config.gait.stand_height_min_mm) / stand_height_range_mm, 0.0f, 1.0f)
+        : 0.0f;
     fan_service_set_rc_link(rc_link_up);
     fan_service_set_motion_mode(walk_mode);
     fan_service_set_at_min_height(at_min_height);
+    fan_service_set_stand_height_ratio(height_ratio);
 }
 
 static float clampf_local(float value, float min_value, float max_value)
