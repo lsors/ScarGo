@@ -779,7 +779,6 @@ static esp_err_t gait_file_get_handler(httpd_req_t *req)
 static esp_err_t imu_config_get_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "balance_enabled", s_config->imu.balance_enabled);
     cJSON_AddNumberToObject(root, "mount_rotation_deg", s_config->imu.mount_rotation_deg);
     cJSON_AddBoolToObject(root, "mount_flip", s_config->imu.mount_flip);
     char *json = cJSON_PrintUnformatted(root);
@@ -800,11 +799,7 @@ static esp_err_t imu_config_post_handler(httpd_req_t *req)
     if (root == NULL) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     }
-    cJSON *item = cJSON_GetObjectItem(root, "balance_enabled");
-    if (cJSON_IsBool(item)) {
-        s_config->imu.balance_enabled = cJSON_IsTrue(item);
-    }
-    item = cJSON_GetObjectItem(root, "mount_rotation_deg");
+    cJSON *item = cJSON_GetObjectItem(root, "mount_rotation_deg");
     if (cJSON_IsNumber(item)) {
         const int r = item->valueint;
         s_config->imu.mount_rotation_deg = (r == 90 || r == 180 || r == 270) ? r : 0;

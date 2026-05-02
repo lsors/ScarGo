@@ -116,10 +116,13 @@ static body_pose_t s_walk_transition_target_pose;
 static float s_walk_transition_start_height_mm;
 static float s_walk_transition_target_height_mm;
 static float s_walk_transition_duration_s;
-static float s_roll_integral;
-static float s_pitch_integral;
-static float s_prev_roll_error;
-static float s_prev_pitch_error;
+static float    s_roll_integral;
+static float    s_pitch_integral;
+static float    s_prev_roll_error;
+static float    s_prev_pitch_error;
+static bool     s_balance_active;
+static float    s_prev_throttle;
+static uint32_t s_balance_idle_ticks;
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -679,13 +682,17 @@ static void apply_balance_impl(body_pose_t *pose, const attitude_state_t *attitu
                                float kp_roll, float ki_roll, float kd_roll,
                                float kp_pitch, float ki_pitch, float kd_pitch)
 {
-    if (!s_config.imu.balance_enabled || !attitude->ready) {
+    if (!attitude->ready) {
         return;
     }
 
     const float dt = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
-    float roll_error = pose->roll_deg - attitude->roll_deg;
+    float roll_error  = attitude->roll_deg  - pose->roll_deg;   // roll 轴符号与 pitch 相反
     float pitch_error = pose->pitch_deg - attitude->pitch_deg;
+
+    if (fabsf(roll_error)  < SCARGO_BALANCE_DEADZONE_DEG) { roll_error  = 0.0f; s_prev_roll_error  = 0.0f; }
+    if (fabsf(pitch_error) < SCARGO_BALANCE_DEADZONE_DEG) { pitch_error = 0.0f; s_prev_pitch_error = 0.0f; }
+    if (roll_error == 0.0f && pitch_error == 0.0f) return;
 
     s_roll_integral += roll_error * dt;
     s_pitch_integral += pitch_error * dt;
@@ -791,6 +798,24 @@ static void apply_diagonal_stand_pose(const rc_command_t *command, const attitud
 // - yaw      ：机身绕 z 轴
 // - pitch    ：机身绕 x 轴
 // - roll     ：机身绕 y 轴
+static bool rc_stand_has_pose_input(const rc_command_t *command)
+{
+    const float threshold = SCARGO_RC_DEADZONE;
+    if (fabsf(command->yaw)   > threshold) return true;
+    if (fabsf(command->roll)  > threshold) return true;
+    if (fabsf(command->pitch) > threshold) return true;
+    if (fabsf(command->throttle - s_prev_throttle) > SCARGO_BALANCE_THROTTLE_THRESHOLD) return true;
+    return false;
+}
+
+static void reset_balance_pid(void)
+{
+    s_roll_integral    = 0.0f;
+    s_pitch_integral   = 0.0f;
+    s_prev_roll_error  = 0.0f;
+    s_prev_pitch_error = 0.0f;
+}
+
 static void apply_stand_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
@@ -822,8 +847,35 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
         }
     }
 
+    const uint32_t idle_ticks_required = (uint32_t)(SCARGO_BALANCE_IDLE_S * SCARGO_CONTROL_RATE_HZ);
+    bool has_input = rc_stand_has_pose_input(command);
+    s_prev_throttle = command->throttle;
+
+    if (has_input) {
+        s_balance_idle_ticks = 0;
+    } else if (s_balance_idle_ticks < idle_ticks_required) {
+        s_balance_idle_ticks++;
+    }
+
+    bool want_balance = !has_input
+                        && (s_balance_idle_ticks >= idle_ticks_required)
+                        && !s_transition_active
+                        && (s_posture != ROBOT_POSTURE_LIE);
+
+    if (s_balance_active && !want_balance) {
+        reset_balance_pid();
+        s_balance_active = false;
+        ESP_LOGI(TAG, "Balance: off");
+    } else if (!s_balance_active && want_balance) {
+        reset_balance_pid();
+        s_balance_active = true;
+        ESP_LOGI(TAG, "Balance: on");
+    }
+
     solved_pose = s_current_body_pose;
-    apply_balance(&solved_pose, attitude);
+    if (s_balance_active) {
+        apply_balance(&solved_pose, attitude);
+    }
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
@@ -1112,6 +1164,10 @@ void robot_control_init(const system_config_t *config)
     s_log_stand_takeover_once = false;
     s_last_aux_sa = 0;
     s_last_aux_sc = 0;
+    s_balance_active = false;
+    s_prev_throttle = 0.0f;
+    s_balance_idle_ticks = 0;
+    reset_balance_pid();
     s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
     servo_output_init(&config->calibration);
@@ -1158,12 +1214,6 @@ void robot_control_update_imu(const imu_config_t *imu)
 {
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     s_config.imu = *imu;
-    if (!imu->balance_enabled) {
-        s_roll_integral = 0.0f;
-        s_pitch_integral = 0.0f;
-        s_prev_roll_error = 0.0f;
-        s_prev_pitch_error = 0.0f;
-    }
     xSemaphoreGiveRecursive(s_state_mutex);
 }
 

@@ -53,7 +53,6 @@ void config_store_set_defaults(system_config_t *config)
     config->oled.leg = 0;
     config->oled.leg_view = 5;
     config->oled.robot_view = 5;
-    config->imu.balance_enabled = false;
     config->imu.mount_rotation_deg = 0;
     config->imu.mount_flip = false;
 }

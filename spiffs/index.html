@@ -883,12 +883,6 @@
           </div>
         </div>
 
-        <label style="font-size:13px;margin-bottom:4px;margin-top:14px;display:block" data-i18n="imuBalanceLabel">Balance PID</label>
-        <div class="button-row" style="margin-bottom:12px">
-          <button id="imu-balance-off" class="ghost" onclick="setImuBalance(false)" data-i18n="imuBalanceOff">Off (default)</button>
-          <button id="imu-balance-on" class="ghost" onclick="setImuBalance(true)" data-i18n="imuBalanceOn">On</button>
-        </div>
-
         <label style="font-size:13px;margin-bottom:4px;display:block" data-i18n="imuRotLabel">Rotation (CCW from above)</label>
         <div class="button-row" style="margin-bottom:12px">
           <button id="imu-rot-0"   class="ghost" onclick="setImuRotation(0)">0°</button>
@@ -951,44 +945,36 @@
     <section id="page-ota" class="card tab page">
       <div class="section-head">
         <h2 data-i18n="otaTitle">OTA Update</h2>
-        <p class="muted" data-i18n="otaDesc">刷入新固件后设备自动重启，页面会等待设备上线后自动刷新。</p>
+        <p class="muted" data-i18n="otaDesc">选择需要刷写的文件，点击刷写按钮。包含固件时完成后自动重启，仅网页文件时刷新页面。</p>
       </div>
-
-      <!-- 固件 -->
       <div class="slider-card">
-        <div class="slider-head"><label data-i18n="otaFwTitle">固件 (scargo.bin)</label></div>
-        <p class="hint" data-i18n="otaFwDesc">包含 ESP32 主程序：运动控制、WiFi、API 等全部 C 代码逻辑。修改 C 代码后需要刷此文件。</p>
-        <div style="display:grid;gap:10px">
-          <input type="file" id="ota_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px">
-          <div class="actions">
-            <button id="btn-ota-flash" onclick="startOta('fw')" data-i18n="otaFlash">Flash 固件</button>
-          </div>
-          <div id="ota_progress" style="display:none">
-            <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
-              <div id="ota_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+        <div style="display:grid;gap:14px">
+          <div>
+            <label style="font-size:13px;display:block;margin-bottom:4px" data-i18n="otaFwTitle">固件 (scargo.bin)</label>
+            <p class="hint" data-i18n="otaFwDesc">包含 ESP32 主程序：运动控制、WiFi、API 等全部 C 代码逻辑。修改 C 代码后需要刷此文件。</p>
+            <input type="file" id="ota_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px;width:100%;box-sizing:border-box">
+            <div id="ota_fw_progress" style="display:none;margin-top:8px">
+              <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
+                <div id="ota_fw_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+              </div>
+              <div style="margin-top:4px;font-size:12px;color:#53636c" id="ota_fw_progress_text"></div>
             </div>
-            <div style="margin-top:6px;font-size:13px;color:#53636c" id="ota_progress_text"></div>
+          </div>
+          <div>
+            <label style="font-size:13px;display:block;margin-bottom:4px" data-i18n="otaSpiffsTitle">网页文件 (storage.bin)</label>
+            <p class="hint" data-i18n="otaSpiffsDesc">包含 Web UI 界面（index.html）。修改网页样式、布局、交互逻辑后需要单独刷此文件，不影响固件逻辑。分区容量 1080 KB，当前 UI 约 92 KB。</p>
+            <input type="file" id="ota_spiffs_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px;width:100%;box-sizing:border-box">
+            <div id="ota_spiffs_progress" style="display:none;margin-top:8px">
+              <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
+                <div id="ota_spiffs_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
+              </div>
+              <div style="margin-top:4px;font-size:12px;color:#53636c" id="ota_spiffs_progress_text"></div>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="btn-ota-flash" onclick="startOta()" data-i18n="otaFlash">Flash</button>
           </div>
           <pre id="ota_status" style="margin:0;font-size:13px;color:var(--brand-strong);white-space:pre-wrap;min-height:1.2em"></pre>
-        </div>
-      </div>
-
-      <!-- 网页文件 -->
-      <div class="slider-card">
-        <div class="slider-head"><label data-i18n="otaSpiffsTitle">网页文件 (storage.bin)</label></div>
-        <p class="hint" data-i18n="otaSpiffsDesc">包含 Web UI 界面（index.html）。修改网页样式、布局、交互逻辑后需要单独刷此文件，不影响固件逻辑。分区容量 1080 KB，当前 UI 约 92 KB。</p>
-        <div style="display:grid;gap:10px">
-          <input type="file" id="ota_spiffs_file" accept=".bin" style="padding:8px;border-radius:10px;border:1px solid var(--line);font-size:13px">
-          <div class="actions">
-            <button id="btn-ota-spiffs" onclick="startOta('spiffs')" data-i18n="otaSpiffsFlash">Flash 网页</button>
-          </div>
-          <div id="ota_spiffs_progress" style="display:none">
-            <div style="background:rgba(24,58,55,0.12);border-radius:999px;height:8px;overflow:hidden">
-              <div id="ota_spiffs_bar" style="height:100%;background:var(--brand);width:0%;transition:width 0.15s ease;border-radius:999px"></div>
-            </div>
-            <div style="margin-top:6px;font-size:13px;color:#53636c" id="ota_spiffs_progress_text"></div>
-          </div>
-          <pre id="ota_spiffs_status" style="margin:0;font-size:13px;color:var(--brand-strong);white-space:pre-wrap;min-height:1.2em"></pre>
         </div>
       </div>
     </section>
@@ -1057,9 +1043,6 @@
         rcSwitches: "Switch channels",
         imuMountTitle: "IMU Mounting",
         imuMountHint: "Set the physical mounting orientation of the IMU sensor. Changes take effect immediately.",
-        imuBalanceLabel: "Balance PID",
-        imuBalanceOff: "Off (default)",
-        imuBalanceOn: "On",
         imuRotLabel: "Rotation (CCW from above)",
         imuFlipLabel: "Orientation",
         imuFlipNormal: "Normal (+)",
@@ -1152,13 +1135,15 @@
         statusCalibrationSavedAndExited: "Calibration saved and calibration mode exited",
         statusFanSaved: "Fan setting applied",
         otaTitle: "OTA Update",
-        otaDesc: "Flash new firmware. The device restarts automatically and the page reconnects.",
+        otaDesc: "Select files and press Flash. If firmware is included the device restarts; web UI only refreshes the page.",
         otaFwTitle: "Firmware (scargo.bin)",
         otaFwDesc: "Contains all ESP32 C code: motion control, WiFi, API, etc. Flash this after changing C source files.",
-        otaFlash: "Flash Firmware",
+        otaFlash: "Flash",
         otaSpiffsTitle: "Web UI (storage.bin)",
         otaSpiffsDesc: "Contains the Web UI (index.html). Flash this after changing the web page. Partition: 1080 KB, current UI: ~92 KB.",
-        otaSpiffsFlash: "Flash Web UI",
+        otaFlashingSpiffs: "Uploading Web UI",
+        otaFlashingFw: "Uploading Firmware",
+        otaSpiffsDone: "Web UI done, uploading firmware...",
         otaUploading: "Uploading",
         otaSuccess: "Flash complete! Waiting for device to restart...",
         otaReconnecting: "Reconnecting",
@@ -1202,9 +1187,6 @@
         rcSwitches: "开关通道",
         imuMountTitle: "IMU 安装设置",
         imuMountHint: "设置 IMU 传感器的物理安装方向，修改后立即生效并保存到 Flash。",
-        imuBalanceLabel: "平衡 PID",
-        imuBalanceOff: "关闭（默认）",
-        imuBalanceOn: "开启",
         imuRotLabel: "旋转角度（从上往下看逆时针）",
         imuFlipLabel: "安装方向",
         imuFlipNormal: "正面朝上（+）",
@@ -1300,10 +1282,12 @@
         otaDesc: "刷入新固件后设备自动重启，页面会等待设备上线后自动刷新。",
         otaFwTitle: "固件 (scargo.bin)",
         otaFwDesc: "包含 ESP32 主程序：运动控制、WiFi、API 等全部 C 代码逻辑。修改 C 代码后刷此文件。",
-        otaFlash: "烧写固件",
+        otaFlash: "刷写",
         otaSpiffsTitle: "网页文件 (storage.bin)",
         otaSpiffsDesc: "包含 Web UI 界面（index.html）。修改网页后单独刷此文件，不影响固件逻辑。分区 1080 KB，当前 UI 约 92 KB。",
-        otaSpiffsFlash: "烧写网页",
+        otaFlashingSpiffs: "上传网页文件",
+        otaFlashingFw: "上传固件",
+        otaSpiffsDone: "网页烧写完成，开始上传固件…",
         otaUploading: "上传中",
         otaSuccess: "烧写完成！等待设备重启…",
         otaReconnecting: "正在重连",
@@ -1419,7 +1403,7 @@
     }
 
     let wifiPollInterval = null;
-    let imuConfig = { balance_enabled: false, mount_rotation_deg: 0, mount_flip: false };
+    let imuConfig = { mount_rotation_deg: 0, mount_flip: false };
 
     function showPage(page) {
       if (activePage === "settings" && page !== "settings" && wifiPollInterval) {
@@ -1876,10 +1860,6 @@
     }
 
     function updateImuMountUI() {
-      document.getElementById("imu-balance-off").classList.toggle("active", !imuConfig.balance_enabled);
-      document.getElementById("imu-balance-off").classList.toggle("selected", !imuConfig.balance_enabled);
-      document.getElementById("imu-balance-on").classList.toggle("active", imuConfig.balance_enabled);
-      document.getElementById("imu-balance-on").classList.toggle("selected", imuConfig.balance_enabled);
       [0, 90, 180, 270].forEach((r) => {
         const el = document.getElementById(`imu-rot-${r}`);
         if (el) {
@@ -1893,9 +1873,8 @@
       document.getElementById("imu-flip-true").classList.toggle("selected", imuConfig.mount_flip);
       const statusEl = document.getElementById("imu_mount_status");
       if (statusEl) {
-        const balStr = imuConfig.balance_enabled ? t("imuBalanceOn") : t("imuBalanceOff");
         const flipStr = imuConfig.mount_flip ? t("imuFlipFlipped") : t("imuFlipNormal");
-        statusEl.textContent = `${t("imuBalanceLabel")}: ${balStr}  |  ${t("imuRotLabel").split("(")[0].trim()}: ${imuConfig.mount_rotation_deg}°  |  ${t("imuFlipLabel")}: ${flipStr}`;
+        statusEl.textContent = `${t("imuRotLabel").split("(")[0].trim()}: ${imuConfig.mount_rotation_deg}°  |  ${t("imuFlipLabel")}: ${flipStr}`;
       }
     }
 
@@ -1903,7 +1882,6 @@
       fetch("/api/imu", { signal: AbortSignal.timeout(5000) })
         .then((r) => r.json())
         .then((data) => {
-          imuConfig.balance_enabled = !!data.balance_enabled;
           imuConfig.mount_rotation_deg = Number.isFinite(Number(data.mount_rotation_deg)) ? Number(data.mount_rotation_deg) : 0;
           imuConfig.mount_flip = !!data.mount_flip;
           updateImuMountUI();
@@ -1934,11 +1912,6 @@
       if (btn)  btn.textContent = s_rcPreviewOn ? "■ 关闭实时预览" : "▶ 开启实时预览";
     }
 
-    function setImuBalance(enabled) {
-      imuConfig.balance_enabled = enabled;
-      saveImuConfig();
-    }
-
     function setImuRotation(deg) {
       imuConfig.mount_rotation_deg = deg;
       saveImuConfig();
@@ -1955,38 +1928,59 @@
       });
     }
 
-    function startOta(type) {
-      const isFw = type !== "spiffs";
-      const fileId    = isFw ? "ota_file"            : "ota_spiffs_file";
-      const btnId     = isFw ? "btn-ota-flash"        : "btn-ota-spiffs";
-      const barId     = isFw ? "ota_bar"              : "ota_spiffs_bar";
-      const progId    = isFw ? "ota_progress"         : "ota_spiffs_progress";
-      const textId    = isFw ? "ota_progress_text"    : "ota_spiffs_progress_text";
-      const statusId  = isFw ? "ota_status"           : "ota_spiffs_status";
-      const endpoint  = isFw ? "/api/ota"             : "/api/ota/spiffs";
+    function uploadFile(file, endpoint, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", endpoint);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) onProgress(e.loaded / e.total);
+        });
+        xhr.onload = () => {
+          if (xhr.status === 200) resolve();
+          else reject(new Error(xhr.responseText));
+        };
+        xhr.onerror = () => resolve(); // 固件重启会断连，视为成功
+        xhr.send(file);
+      });
+    }
 
-      const fileInput = document.getElementById(fileId);
-      if (!fileInput.files || !fileInput.files.length) {
-        document.getElementById(statusId).textContent =
-          currentLang === "zh" ? "请先选择 .bin 文件" : "Please select a .bin file first";
+    async function startOta() {
+      const fwFile     = document.getElementById("ota_file").files[0];
+      const spiffsFile = document.getElementById("ota_spiffs_file").files[0];
+      const btn        = document.getElementById("btn-ota-flash");
+      const statusEl   = document.getElementById("ota_status");
+
+      if (!fwFile && !spiffsFile) {
+        statusEl.textContent = currentLang === "zh" ? "请先选择至少一个 .bin 文件" : "Please select at least one .bin file";
         return;
       }
-      const file = fileInput.files[0];
-      const btn  = document.getElementById(btnId);
-      const bar  = document.getElementById(barId);
-      const progressText = document.getElementById(textId);
-      const statusEl     = document.getElementById(statusId);
 
       btn.disabled = true;
-      document.getElementById(progId).style.display = "block";
-      bar.style.width = "0%";
-      bar.style.background = "var(--brand)";
       statusEl.textContent = "";
 
+      function flashBar(barId, progressId, textId) {
+        const bar         = document.getElementById(barId);
+        const progressEl  = document.getElementById(progressId);
+        const progressText = document.getElementById(textId);
+        progressEl.style.display = "block";
+        bar.style.width = "0%";
+        bar.style.background = "var(--brand)";
+        progressText.textContent = "0%";
+        return {
+          progress(ratio) {
+            bar.style.width = (ratio * 100).toFixed(1) + "%";
+            progressText.textContent = Math.round(ratio * 100) + "%";
+          },
+          done() {
+            bar.style.width = "100%";
+            bar.style.background = "#22b84a";
+            progressText.textContent = "100%";
+          },
+        };
+      }
+
       function beginReconnect() {
-        bar.style.width = "100%";
-        bar.style.background = "#f0a030";
-        progressText.textContent = "100%";
         statusEl.textContent = t("otaSuccess");
         let elapsed = 0;
         const poll = setInterval(() => {
@@ -1996,7 +1990,6 @@
             .then((r) => { if (r.ok) return r.json(); throw new Error(); })
             .then(() => {
               clearInterval(poll);
-              bar.style.background = "#22b84a";
               statusEl.textContent = t("otaOnline");
               setTimeout(() => location.reload(), 1200);
             })
@@ -2004,37 +1997,25 @@
         }, 2000);
       }
 
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", endpoint);
-      xhr.setRequestHeader("Content-Type", "application/octet-stream");
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round(e.loaded / e.total * 100);
-          bar.style.width = pct + "%";
-          progressText.textContent = t("otaUploading") + "... " + pct + "%";
+      try {
+        if (spiffsFile) {
+          const ui = flashBar("ota_spiffs_bar", "ota_spiffs_progress", "ota_spiffs_progress_text");
+          await uploadFile(spiffsFile, "/api/ota/spiffs", ui.progress);
+          ui.done();
         }
-      });
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          if (!isFw) {
-            // storage.bin OTA：无需重启，直接刷新页面即可加载新资源
-            bar.style.width = "100%";
-            bar.style.background = "#22b84a";
-            progressText.textContent = "100%";
-            statusEl.textContent = t("otaSuccess");
-            setTimeout(() => location.reload(), 1200);
-          } else {
-            beginReconnect();
-          }
+        if (fwFile) {
+          const ui = flashBar("ota_fw_bar", "ota_fw_progress", "ota_fw_progress_text");
+          await uploadFile(fwFile, "/api/ota", ui.progress);
+          ui.done();
+          beginReconnect();
         } else {
-          statusEl.textContent = t("otaError") + ": " + xhr.responseText;
-          btn.disabled = false;
+          statusEl.textContent = t("otaSuccess");
+          setTimeout(() => location.reload(), 1200);
         }
-      };
-      xhr.onerror = () => {
-        beginReconnect();
-      };
-      xhr.send(file);
+      } catch (err) {
+        statusEl.textContent = t("otaError") + ": " + err.message;
+        btn.disabled = false;
+      }
     }
 
     let logPolling = false;

@@ -85,14 +85,19 @@
 // 归一化值（-1~1），绝对值小于该值时视为零输入，防止摇杆漂移
 #define SCARGO_RC_DEADZONE 0.04f
 
+// ── 平衡 PID 激活条件 ─────────────────────────────────────────────────────────
+#define SCARGO_BALANCE_IDLE_S              2.0f   // 所有摇杆静止多少秒后才激活平衡控制
+#define SCARGO_BALANCE_THROTTLE_THRESHOLD  0.02f  // 油门单帧变化量超过此值视为在打杆
+#define SCARGO_BALANCE_DEADZONE_DEG        1.5f   // 姿态偏差小于此角度不做补偿（过滤微振）
+
 // ── 平衡 PID 增益（普通站立 / 行走模式）─────────────────────────────────────
 // PID 对 IMU 实测姿态与目标姿态的偏差进行补偿，输出叠加到机身姿态上
-#define SCARGO_BALANCE_KP_ROLL   0.12f   // roll 轴比例增益（响应速度）
+#define SCARGO_BALANCE_KP_ROLL   0.60f   // roll 轴比例增益（1.0=完全补偿，0.8=稳态残差44%）
 #define SCARGO_BALANCE_KI_ROLL   0.00f   // roll 轴积分增益（消除静差，当前关闭）
-#define SCARGO_BALANCE_KD_ROLL   0.02f   // roll 轴微分增益（阻尼，抑制振荡）
-#define SCARGO_BALANCE_KP_PITCH  0.12f   // pitch 轴比例增益
+#define SCARGO_BALANCE_KD_ROLL   0.00f   // roll 轴微分增益（D项放大IMU噪声，先关闭）
+#define SCARGO_BALANCE_KP_PITCH  0.60f   // pitch 轴比例增益
 #define SCARGO_BALANCE_KI_PITCH  0.00f   // pitch 轴积分增益（当前关闭）
-#define SCARGO_BALANCE_KD_PITCH  0.02f   // pitch 轴微分增益
+#define SCARGO_BALANCE_KD_PITCH  0.00f   // pitch 轴微分增益（D项放大IMU噪声，先关闭）
 
 // ── 平衡 PID 增益（对角腿站立模式）──────────────────────────────────────────
 // 对角腿支撑时稳定性更低，需要更强的 PID 响应

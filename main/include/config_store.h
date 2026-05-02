@@ -58,7 +58,6 @@ typedef struct {
 
 // ── IMU 配置 ──────────────────────────────────────────────────────────────────
 typedef struct {
-    bool balance_enabled;       // 是否启用 IMU 闭环平衡补偿
     int  mount_rotation_deg;    // IMU 绕 Z 轴 CCW 安装旋转角度（0 / 90 / 180 / 270）
     bool mount_flip;            // IMU 元器件面朝下时置 true（Z 轴反向）
 } imu_config_t;

@@ -124,7 +124,6 @@ static cJSON *create_oled_json(const oled_config_t *config)
 static cJSON *create_imu_json(const imu_config_t *config)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "balance_enabled", config->balance_enabled);
     cJSON_AddNumberToObject(root, "mount_rotation_deg", config->mount_rotation_deg);
     cJSON_AddBoolToObject(root, "mount_flip", config->mount_flip);
     return root;
@@ -132,11 +131,7 @@ static cJSON *create_imu_json(const imu_config_t *config)
 
 static void load_imu_from_json(imu_config_t *config, cJSON *root)
 {
-    cJSON *item = cJSON_GetObjectItem(root, "balance_enabled");
-    if (cJSON_IsBool(item)) {
-        config->balance_enabled = cJSON_IsTrue(item);
-    }
-    item = cJSON_GetObjectItem(root, "mount_rotation_deg");
+    cJSON *item = cJSON_GetObjectItem(root, "mount_rotation_deg");
     if (cJSON_IsNumber(item)) {
         const int r = item->valueint;
         config->mount_rotation_deg = (r == 90 || r == 180 || r == 270) ? r : 0;
