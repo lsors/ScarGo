@@ -250,17 +250,23 @@ bool kinematics_solve_leg_geometry(scargo_leg_id_t leg, const vec3f_t *foot_body
     const float lateral = side_sign * foot_body->x_mm;
     const float forward = foot_body->y_mm;
     const float vertical = foot_body->z_mm;
-    const float radial = sqrtf(lateral * lateral + vertical * vertical);
-    if (radial <= mech->shoulder_length_mm + 1.0f) {
-        return false;
+
+    /* 将肩膀平面内半径夹到可达最小值：足端不可能在肩轴内侧，
+     * 夹住后继续求解最近合法姿态，而非直接拒绝并跳回 90°。 */
+    const float min_radial = mech->shoulder_length_mm + 1.0f;
+    float radial = sqrtf(lateral * lateral + vertical * vertical);
+    if (radial < min_radial) {
+        radial = min_radial;
     }
 
-    float planar_vertical = -sqrtf(fmaxf(radial * radial - mech->shoulder_length_mm * mech->shoulder_length_mm, 0.0f));
+    float planar_vertical = -sqrtf(radial * radial - mech->shoulder_length_mm * mech->shoulder_length_mm);
     float shoulder_deg = rad2deg(atan2f(vertical, lateral) - atan2f(planar_vertical, mech->shoulder_length_mm));
-    float distance = sqrtf(forward * forward + planar_vertical * planar_vertical);
-    if (distance < 1.0f || distance > (mech->thigh_length_mm + mech->calf_length_mm)) {
-        return false;
-    }
+
+    /* 将腿平面内的伸展距离夹到 [1, thigh+calf-1]：
+     * 超出最大伸展（摇杆打到角落时对角腿最容易触发）时保持满伸姿态，
+     * 而非拒绝 IK 并让三个舵机跳回 90°。 */
+    const float max_reach = mech->thigh_length_mm + mech->calf_length_mm - 1.0f;
+    float distance = clampf(sqrtf(forward * forward + planar_vertical * planar_vertical), 1.0f, max_reach);
 
     /*
      * 这里直接求几何上的 beta 大夹角。
