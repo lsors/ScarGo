@@ -26,3 +26,13 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES app_update esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_driver_uart esp_event esp_http_server esp_netif esp_pm esp_wifi json mdns nvs_flash spiffs
     )
+
+# 每次构建前运行版本自增脚本，生成 main/include/version.h
+idf_build_get_property(python PYTHON)
+add_custom_target(version_bump ALL
+    COMMAND ${python} ${CMAKE_SOURCE_DIR}/version_bump.py
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Bumping firmware version..."
+    VERBATIM
+)
+add_dependencies(${COMPONENT_LIB} version_bump)

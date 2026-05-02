@@ -9,6 +9,13 @@
 
 static const char *TAG = "ota_service";
 
+static void ota_restart_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+}
+
 esp_err_t ota_service_handle_upload(httpd_req_t *req)
 {
     if (req->content_len <= 0) {
@@ -71,8 +78,8 @@ esp_err_t ota_service_handle_upload(httpd_req_t *req)
     ESP_LOGI(TAG, "OTA complete, rebooting into '%s'", part->label);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"status\":\"ota_ok\"}");
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    /* HTTP handler 先返回让响应真正发出，再由独立任务延迟重启 */
+    xTaskCreate(ota_restart_task, "ota_rst", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
 
@@ -134,10 +141,23 @@ esp_err_t ota_service_handle_spiffs_upload(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write failed");
     }
 
-    ESP_LOGI(TAG, "SPIFFS OTA complete (%u bytes), rebooting", (unsigned)offset);
+    ESP_LOGI(TAG, "SPIFFS OTA complete (%u bytes), remounting", (unsigned)offset);
+
+    /* 重新挂载 SPIFFS，使新文件立即生效，不重启设备 */
+    esp_vfs_spiffs_conf_t remount_conf = {
+        .base_path             = "/spiffs",
+        .partition_label       = NULL,
+        .max_files             = 4,
+        .format_if_mount_failed = false,
+    };
+    esp_err_t remount_err = esp_vfs_spiffs_register(&remount_conf);
+    if (remount_err != ESP_OK) {
+        ESP_LOGW(TAG, "SPIFFS remount failed (%s), page reload will load new content on next boot",
+                 esp_err_to_name(remount_err));
+    }
+
+    /* SPIFFS OTA 永不重启，由前端 location.reload() 加载新资源 */
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"status\":\"spiffs_ok\"}");
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
     return ESP_OK;
 }

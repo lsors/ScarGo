@@ -129,6 +129,7 @@ static robot_walk_leg_state_t walk_leg_state_for_phase(int leg, float phase);
 static const char *walk_status_name(robot_walk_status_t status);
 /* 把单腿状态转换成日志/OLED 统一使用的短字符串。 */
 static const char *walk_leg_state_name(robot_walk_leg_state_t state);
+static float clampf_local(float value, float min_value, float max_value);
 
 static void update_fan_auto_context(bool rc_link_up)
 {

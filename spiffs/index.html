@@ -643,7 +643,7 @@
         <p data-i18n="subtitle">Calibration, gait tuning, and test actions</p>
       </div>
       <div class="header-tools">
-        <div class="ui-version">UI v2026.03.30.3-45</div>
+        <div class="ui-version" id="fw-version">—</div>
         <div class="lang-switch">
           <button id="lang-en" class="active" onclick="setLanguage('en')">EN</button>
           <button id="lang-zh" onclick="setLanguage('zh')">中文</button>
@@ -2016,7 +2016,16 @@
       });
       xhr.onload = () => {
         if (xhr.status === 200) {
-          beginReconnect();
+          if (!isFw) {
+            // storage.bin OTA：无需重启，直接刷新页面即可加载新资源
+            bar.style.width = "100%";
+            bar.style.background = "#22b84a";
+            progressText.textContent = "100%";
+            statusEl.textContent = t("otaSuccess");
+            setTimeout(() => location.reload(), 1200);
+          } else {
+            beginReconnect();
+          }
         } else {
           statusEl.textContent = t("otaError") + ": " + xhr.responseText;
           btn.disabled = false;
@@ -2412,6 +2421,10 @@
     applyRangeConfig();
     bindSliderEvents();
     loadAll();
+    fetch("/api/version")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && d.fw) document.getElementById("fw-version").textContent = "FW v" + d.fw; })
+      .catch(() => {});
     setLanguage(currentLang);
     document.body.style.visibility = "visible";
     (function scheduleStatus() {

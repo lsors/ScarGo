@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 #include "cJSON.h"
 #include "board_defaults.h"
@@ -25,6 +26,7 @@
 #include "wifi_config.h"
 #include "robot_control.h"
 #include "storage_service.h"
+#include "version.h"
 
 static const char *TAG = "web_ui";
 static httpd_handle_t s_server;
@@ -243,27 +245,30 @@ static char *read_request_body(httpd_req_t *req)
 static esp_err_t root_handler(httpd_req_t *req)
 {
     buzzer_service_page_connect_beep();
+
+    /* 用 stat() 获取文件大小作为 ETag，无需读取整个文件即可完成 304 协商，
+     * 避免每次缓存命中都从 SPIFFS 读 98KB。 */
+    struct stat st;
+    if (stat(HTML_PATH, &st) == 0 && st.st_size > 0) {
+        char etag[24];
+        snprintf(etag, sizeof(etag), "\"%ld\"", (long)st.st_size);
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+        httpd_resp_set_hdr(req, "ETag", etag);
+
+        char if_none_match[32] = {0};
+        if (httpd_req_get_hdr_value_str(req, "If-None-Match", if_none_match, sizeof(if_none_match)) == ESP_OK
+            && strcmp(if_none_match, etag) == 0) {
+            httpd_resp_set_status(req, "304 Not Modified");
+            return httpd_resp_send(req, NULL, 0);
+        }
+    }
+
     httpd_resp_set_type(req, "text/html");
     size_t html_size = 0;
     char *html = load_html_asset(&html_size);
     if (html == NULL) {
         ESP_LOGW(TAG, "Falling back to embedded HTML because %s could not be loaded", HTML_PATH);
         return httpd_resp_send(req, FALLBACK_HTML, HTTPD_RESP_USE_STRLEN);
-    }
-
-    /* ETag = 文件字节数，用于浏览器协商缓存；Cache-Control: no-cache 让浏览器
-     * 每次都先验证，文件未变化时返回 304 Not Modified，跳过 98KB 重传。 */
-    char etag[24];
-    snprintf(etag, sizeof(etag), "\"%zu\"", html_size);
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_set_hdr(req, "ETag", etag);
-
-    char if_none_match[32] = {0};
-    if (httpd_req_get_hdr_value_str(req, "If-None-Match", if_none_match, sizeof(if_none_match)) == ESP_OK
-        && strcmp(if_none_match, etag) == 0) {
-        free(html);
-        httpd_resp_set_status(req, "304 Not Modified");
-        return httpd_resp_send(req, NULL, 0);
     }
 
     esp_err_t err = httpd_resp_send(req, html, (ssize_t)html_size);
@@ -817,6 +822,17 @@ static esp_err_t imu_config_post_handler(httpd_req_t *req)
     return send_json(req, "{\"status\":\"saved\"}");
 }
 
+static esp_err_t version_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "fw", SCARGO_FW_VERSION_STR);
+    char *json = cJSON_PrintUnformatted(root);
+    esp_err_t err = send_json(req, json);
+    cJSON_free(json);
+    cJSON_Delete(root);
+    return err;
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     return ota_service_handle_upload(req);
@@ -910,7 +926,7 @@ void web_ui_start(system_config_t *config)
     wifi_config_start();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    server_config.max_uri_handlers = 24;
+    server_config.max_uri_handlers = 28;
     server_config.recv_wait_timeout = 30;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
@@ -1023,6 +1039,12 @@ void web_ui_start(system_config_t *config)
         .handler = imu_config_post_handler,
         .user_ctx = NULL,
     };
+    httpd_uri_t version_get = {
+        .uri = "/api/version",
+        .method = HTTP_GET,
+        .handler = version_get_handler,
+        .user_ctx = NULL,
+    };
     httpd_uri_t ota_post = {
         .uri = "/api/ota",
         .method = HTTP_POST,
@@ -1054,6 +1076,7 @@ void web_ui_start(system_config_t *config)
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &gait_file_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &imu_config_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &version_get));
     ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &ota_post));
     httpd_uri_t ota_spiffs_post = {
         .uri = "/api/ota/spiffs",

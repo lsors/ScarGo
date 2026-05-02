@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# 自动生成的版本头文件（由 version_bump.py 在每次构建时更新）
+main/include/version.h
+
 # ESP-IDF build output
 build/
 managed_components/

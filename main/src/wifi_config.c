@@ -112,6 +112,18 @@ void wifi_config_start(void)
         esp_netif_create_default_wifi_sta();
     }
 
+    /* mDNS 必须在 esp_wifi_start() 之前初始化，才能订阅到
+     * WIFI_EVENT_AP_START 事件，否则会错过该事件导致 AP 接口
+     * 永远不会被 mDNS 绑定，scargo.local 无法解析。 */
+    if (mdns_init() == ESP_OK) {
+        mdns_hostname_set("scargo");
+        mdns_instance_name_set("ScarGo Robot");
+        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+        ESP_LOGI(TAG, "mDNS init OK, will advertise on http://scargo.local after WiFi start");
+    } else {
+        ESP_LOGW(TAG, "mDNS init failed");
+    }
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
@@ -153,13 +165,6 @@ void wifi_config_start(void)
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    if (mdns_init() == ESP_OK) {
-        mdns_hostname_set("scargo");
-        mdns_instance_name_set("ScarGo Robot");
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-        ESP_LOGI(TAG, "mDNS ready: http://scargo.local");
-    }
 }
 
 wifi_info_t wifi_config_get_info(void)
