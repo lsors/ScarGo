@@ -926,6 +926,24 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
     if (s_balance_active) {
         apply_balance_stance_pose(&solved_pose, s_balance_roll_f, s_balance_pitch_f);
     }
+
+#ifdef SCARGO_POSE_DEBUG_LOG
+    {
+        static uint32_t s_dbg_tick = 0;
+        if (++s_dbg_tick % 20 == 0) {
+            ESP_LOGI(TAG,
+                "POSE_DBG | rc  roll=%+.2f pitch=%+.2f"
+                " | imu roll=%+.2f pitch=%+.2f"
+                " | body roll=%+.2f pitch=%+.2f"
+                " | solved roll=%+.2f pitch=%+.2f",
+                command->roll, command->pitch,
+                attitude->roll_deg, attitude->pitch_deg,
+                s_current_body_pose.roll_deg, s_current_body_pose.pitch_deg,
+                solved_pose.roll_deg, solved_pose.pitch_deg);
+        }
+    }
+#endif
+
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
