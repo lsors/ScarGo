@@ -723,21 +723,27 @@ static void apply_balance_diagonal(body_pose_t *pose, const attitude_state_t *at
                        SCARGO_DIAG_BALANCE_KP_PITCH, SCARGO_DIAG_BALANCE_KI_PITCH, SCARGO_DIAG_BALANCE_KD_PITCH);
 }
 
-// 站立模式平衡：对足端坐标施加 IMU 反向旋转，使机身在世界坐标系中保持水平。
-// 比 PID 更适合静态场景：无增益调参、无稳态误差、无积分漂移。
+// 站立模式平衡：把 IMU 姿态作为自动姿态目标叠加到 body_pose。
 //
 // 运动学约定（kinematics.h / body_to_leg）：
 //   roll  → 绕 Y 轴：body_to_leg 施加 Ry(-roll)
 //   pitch → 绕 X 轴：body_to_leg 施加 Rx(-pitch)
 //   正向变换顺序（leg→world）：Ry(roll) → Rx(pitch)
 //
-// 补偿即正向变换的逆，逆序施加逆旋转：
-//   Step1: Ry(-roll_f)  ← 先撤销 roll（Y 轴）
-//   Step2: Rx(-pitch_f) ← 再撤销 pitch（X 轴）
+// 因此这里不直接旋转 feet_world，而是复用右摇杆姿态控制的同一条 IK 路径：
+//   feet_world + solved_pose -> kinematics_apply_body_pose()
 //
-// roll_f / pitch_f 为调用方维护的 EMA 滤波值（始终运行，balance 激活时无冷启动）
-static void apply_balance_stance(vec3f_t feet[SCARGO_LEG_COUNT], float roll_f, float pitch_f)
+// 这样补偿天然围绕身体中心进行：
+//   feet_body_center = feet_world - body_center
+//   feet_leg         = inverse_body_rotation(feet_body_center)
+//
+// roll_f / pitch_f 为调用方维护的速率限制姿态值（始终运行，balance 激活时无冷启动）。
+static void apply_balance_stance_pose(body_pose_t *pose, float roll_f, float pitch_f)
 {
+    if (pose == NULL) {
+        return;
+    }
+
     // 输入截断：与右摇杆满舵极限对齐，IK 在此范围内已被验证可达
     roll_f  = fmaxf(-s_config.gait.max_body_roll_deg,  fminf(s_config.gait.max_body_roll_deg,  roll_f));
     pitch_f = fmaxf(-s_config.gait.max_body_pitch_deg, fminf(s_config.gait.max_body_pitch_deg, pitch_f));
@@ -748,26 +754,12 @@ static void apply_balance_stance(vec3f_t feet[SCARGO_LEG_COUNT], float roll_f, f
     if (fabsf(pitch) < SCARGO_BALANCE_DEADZONE_DEG) pitch = 0.0f;
     if (roll == 0.0f && pitch == 0.0f) return;
 
-    const float deg2rad = (float)M_PI / 180.0f;
-    const float ry = -roll  * deg2rad;  // Ry(-roll): 撤销机身 roll（绕 Y 轴）
-    const float rx = -pitch * deg2rad; // Rx(-pitch): 撤销机身 pitch（绕 X 轴）
-    const float cry = cosf(ry), sry = sinf(ry);
-    const float crx = cosf(rx), srx = sinf(rx);
-
-    for (int i = 0; i < SCARGO_LEG_COUNT; i++) {
-        const float x0 = feet[i].x_mm;
-        const float y0 = feet[i].y_mm;
-        const float z0 = feet[i].z_mm;
-        // Step 1: Ry(-roll) — 绕 Y 轴旋转
-        // Ry(a): x'= cos*x + sin*z,  y'= y,  z'= -sin*x + cos*z
-        const float x1 =  cry * x0 + sry * z0;
-        const float z1 = -sry * x0 + cry * z0;
-        // Step 2: Rx(-pitch) — 绕 X 轴旋转（使用 step1 后的 y0/z1）
-        // Rx(a): x'= x,  y'= cos*y - sin*z,  z'= sin*y + cos*z
-        feet[i].x_mm = x1;
-        feet[i].y_mm =  crx * y0 - srx * z1;
-        feet[i].z_mm =  srx * y0 + crx * z1;
-    }
+    pose->roll_deg = clampf_local(pose->roll_deg + roll,
+                                  -s_config.gait.max_body_roll_deg,
+                                  s_config.gait.max_body_roll_deg);
+    pose->pitch_deg = clampf_local(pose->pitch_deg + pitch,
+                                   -s_config.gait.max_body_pitch_deg,
+                                   s_config.gait.max_body_pitch_deg);
 }
 
 static const bool s_diagonal_pair_a_support[SCARGO_LEG_COUNT] = {
@@ -930,13 +922,11 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
         s_balance_pitch_f = move_towards(s_balance_pitch_f, attitude->pitch_deg, rate);
     }
 
-    vec3f_t balanced_feet[SCARGO_LEG_COUNT];
-    copy_feet(balanced_feet, s_current_feet_world);
-    if (s_balance_active) {
-        apply_balance_stance(balanced_feet, s_balance_roll_f, s_balance_pitch_f);
-    }
     solved_pose = s_current_body_pose;
-    solve_and_apply_feet(balanced_feet, s_current_height_mm, &solved_pose);
+    if (s_balance_active) {
+        apply_balance_stance_pose(&solved_pose, s_balance_roll_f, s_balance_pitch_f);
+    }
+    solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
 static void apply_lie_hold_pose(void)
