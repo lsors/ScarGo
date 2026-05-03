@@ -757,7 +757,7 @@ static void apply_balance_stance_pose(body_pose_t *pose, float roll_f, float pit
     pose->roll_deg = clampf_local(pose->roll_deg + roll,
                                   -s_config.gait.max_body_roll_deg,
                                   s_config.gait.max_body_roll_deg);
-    pose->pitch_deg = clampf_local(pose->pitch_deg + pitch,
+    pose->pitch_deg = clampf_local(pose->pitch_deg - pitch,
                                    -s_config.gait.max_body_pitch_deg,
                                    s_config.gait.max_body_pitch_deg);
 }
