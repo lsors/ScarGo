@@ -116,15 +116,16 @@ static body_pose_t s_walk_transition_target_pose;
 static float s_walk_transition_start_height_mm;
 static float s_walk_transition_target_height_mm;
 static float s_walk_transition_duration_s;
-static float    s_roll_integral;      // 对角站立模式 PID 积分
+static float    s_roll_integral;      // 行走模式 PID 积分
 static float    s_pitch_integral;
-static float    s_prev_roll_error;    // 对角站立模式 PID 微分
+static float    s_prev_roll_error;    // 行走模式 PID 微分
 static float    s_prev_pitch_error;
 static bool     s_balance_active;
 static float    s_prev_throttle;
 static uint32_t s_balance_idle_ticks;
-static float    s_balance_roll_f;     // 站立模式当前帧 roll 姿态（°），直接来自 IMU
-static float    s_balance_pitch_f;    // 站立模式当前帧 pitch 姿态（°），直接来自 IMU
+static float    s_balance_roll_f;     // 站立模式速率限制 roll（°）
+static float    s_balance_pitch_f;    // 站立模式速率限制 pitch（°）
+static float    s_diag_balance_perp_f; // 对角站立模式速率限制垂直倾斜量（°）
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -716,11 +717,50 @@ static void apply_balance(body_pose_t *pose, const attitude_state_t *attitude)
                        SCARGO_BALANCE_KP_PITCH, SCARGO_BALANCE_KI_PITCH, SCARGO_BALANCE_KD_PITCH);
 }
 
-static void apply_balance_diagonal(body_pose_t *pose, const attitude_state_t *attitude)
+// 对角腿站立平衡：通过平移机身（offset_x/y）把 CoM 推回支撑对角线。
+//
+// 坐标系 X=前，Y=左。各对角组的垂直轴方向：
+//   对角A(FR+RL)：支撑轴(-bL, bW)，垂直轴( bW, bL)/norm → 指向 FL 侧
+//   对角B(FL+RR)：支撑轴(-bL,-bW)，垂直轴(-bW, bL)/norm → 指向 RL 侧
+//
+// CoM 水平偏移近似为 (pitch_deg, -roll_deg)（roll 正值=左高，CoM 偏右即 -Y）。
+// 补偿方向：tilt_perp > 0 表示 CoM 偏向 +perp 侧，body 向 -perp 平移。
+static void apply_balance_diagonal_translate(body_pose_t *pose,
+                                              const attitude_state_t *attitude,
+                                              robot_posture_t posture)
 {
-    apply_balance_impl(pose, attitude,
-                       SCARGO_DIAG_BALANCE_KP_ROLL, SCARGO_DIAG_BALANCE_KI_ROLL, SCARGO_DIAG_BALANCE_KD_ROLL,
-                       SCARGO_DIAG_BALANCE_KP_PITCH, SCARGO_DIAG_BALANCE_KI_PITCH, SCARGO_DIAG_BALANCE_KD_PITCH);
+    if (!attitude->ready || pose == NULL) {
+        return;
+    }
+
+    const scargo_mechanics_t *mech = board_defaults_mechanics();
+    const float bL = mech->body_length_mm;
+    const float bW = mech->body_width_mm;
+    const float norm = sqrtf(bL * bL + bW * bW);
+    if (norm < 1.0f) {
+        return;
+    }
+
+    const float sign  = (posture == ROBOT_POSTURE_DIAGONAL_A) ? 1.0f : -1.0f;
+    const float perp_x = sign * bW / norm;
+    const float perp_y =        bL / norm;
+
+    float tilt_perp = attitude->pitch_deg * perp_x - attitude->roll_deg * perp_y;
+
+    s_diag_balance_perp_f = move_towards(s_diag_balance_perp_f, tilt_perp,
+                                          SCARGO_BALANCE_RATE_DEG_PER_TICK);
+
+    if (fabsf(s_diag_balance_perp_f) < SCARGO_BALANCE_DEADZONE_DEG) {
+        return;
+    }
+
+    float correction_mm = -s_diag_balance_perp_f * SCARGO_DIAG_BALANCE_GAIN_MM_PER_DEG;
+    correction_mm = clampf_local(correction_mm,
+                                  -SCARGO_DIAG_BALANCE_MAX_OFFSET_MM,
+                                   SCARGO_DIAG_BALANCE_MAX_OFFSET_MM);
+
+    pose->offset_x_mm = correction_mm * perp_x;
+    pose->offset_y_mm = correction_mm * perp_y;
 }
 
 // 站立模式平衡：把 IMU 姿态作为自动姿态目标叠加到 body_pose。
@@ -787,10 +827,7 @@ static void begin_diagonal_stand_transition(robot_posture_t posture)
             target_feet[leg].z_mm = step_height;
         }
     }
-    s_roll_integral = 0.0f;
-    s_pitch_integral = 0.0f;
-    s_prev_roll_error = 0.0f;
-    s_prev_pitch_error = 0.0f;
+    s_diag_balance_perp_f = 0.0f;
     begin_posture_transition(posture, s_current_height_mm, target_feet, &(body_pose_t){0}, 0.0f);
 }
 
@@ -824,7 +861,7 @@ static void apply_diagonal_stand_pose(const rc_command_t *command, const attitud
     }
 
     body_pose_t solved_pose = s_current_body_pose;
-    apply_balance_diagonal(&solved_pose, attitude);
+    apply_balance_diagonal_translate(&solved_pose, attitude, s_posture);
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 

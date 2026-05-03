@@ -108,14 +108,11 @@
 #define SCARGO_BALANCE_KI_PITCH  0.00f   // pitch 轴积分增益（当前关闭）
 #define SCARGO_BALANCE_KD_PITCH  0.00f   // pitch 轴微分增益（D项放大IMU噪声，先关闭）
 
-// ── 平衡 PID 增益（对角腿站立模式）──────────────────────────────────────────
-// 对角腿支撑时稳定性更低，需要更强的 PID 响应
-#define SCARGO_DIAG_BALANCE_KP_ROLL   0.30f   // 对角模式 roll 轴比例增益
-#define SCARGO_DIAG_BALANCE_KI_ROLL   0.01f   // 对角模式 roll 轴积分增益
-#define SCARGO_DIAG_BALANCE_KD_ROLL   0.05f   // 对角模式 roll 轴微分增益
-#define SCARGO_DIAG_BALANCE_KP_PITCH  0.30f   // 对角模式 pitch 轴比例增益
-#define SCARGO_DIAG_BALANCE_KI_PITCH  0.01f   // 对角模式 pitch 轴积分增益
-#define SCARGO_DIAG_BALANCE_KD_PITCH  0.05f   // 对角模式 pitch 轴微分增益
+// ── 对角腿站立平衡（平移补偿）────────────────────────────────────────────────
+// 通过平移机身（offset_x/y）把 CoM 推回支撑对角线。
+// 与旋转补偿不同，平移直接改变 CoM 水平位置，是两腿站立唯一有效的平衡手段。
+#define SCARGO_DIAG_BALANCE_GAIN_MM_PER_DEG   2.0f   // 每度倾斜对应平移量(mm)，保守起点
+#define SCARGO_DIAG_BALANCE_MAX_OFFSET_MM    25.0f   // 最大平移量限制(mm)
 
 // ── 腿侧 / 前后符号辅助宏 ────────────────────────────────────────────────────
 // SIDE_SIGN : 左腿 = +1，右腿 = -1（用于步态中左右差动，如转弯步幅偏差）
