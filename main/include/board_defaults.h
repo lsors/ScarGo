@@ -111,7 +111,8 @@
 // ── 对角腿站立平衡（平移补偿）────────────────────────────────────────────────
 // 通过平移机身（offset_x/y）把 CoM 推回支撑对角线。
 // 与旋转补偿不同，平移直接改变 CoM 水平位置，是两腿站立唯一有效的平衡手段。
-#define SCARGO_DIAG_BALANCE_GAIN_MM_PER_DEG   2.0f   // 每度倾斜对应平移量(mm)，保守起点
+#define SCARGO_DIAG_BALANCE_KP_MM_PER_DEG     2.0f   // P：每度倾斜对应平移量(mm)
+#define SCARGO_DIAG_BALANCE_KD_MM_PER_DPS    0.20f  // D：每(度/秒)倾斜速率对应平移量(mm)，抑制倒扑
 #define SCARGO_DIAG_BALANCE_MAX_OFFSET_MM    25.0f   // 最大平移量限制(mm)
 
 // ── 腿侧 / 前后符号辅助宏 ────────────────────────────────────────────────────

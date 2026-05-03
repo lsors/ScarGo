@@ -125,7 +125,8 @@ static float    s_prev_throttle;
 static uint32_t s_balance_idle_ticks;
 static float    s_balance_roll_f;     // 站立模式速率限制 roll（°）
 static float    s_balance_pitch_f;    // 站立模式速率限制 pitch（°）
-static float    s_diag_balance_perp_f; // 对角站立模式速率限制垂直倾斜量（°）
+static float    s_diag_balance_perp_f;      // 对角站立：速率限制后的垂直倾斜量（°，用于 P 项）
+static float    s_diag_balance_prev_tilt;   // 对角站立：上帧原始垂直倾斜量（°，用于 D 项）
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -747,14 +748,22 @@ static void apply_balance_diagonal_translate(body_pose_t *pose,
 
     float tilt_perp = attitude->pitch_deg * perp_x - attitude->roll_deg * perp_y;
 
+    // D 项：作用于原始倾斜量（未经速率限制），保留倒扑速率信息
+    const float dt = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
+    float d_tilt   = (tilt_perp - s_diag_balance_prev_tilt) / dt;
+    s_diag_balance_prev_tilt = tilt_perp;
+
+    // P 项：速率限制后的倾斜量，平滑驱动平移
     s_diag_balance_perp_f = move_towards(s_diag_balance_perp_f, tilt_perp,
                                           SCARGO_BALANCE_RATE_DEG_PER_TICK);
 
-    if (fabsf(s_diag_balance_perp_f) < SCARGO_BALANCE_DEADZONE_DEG) {
+    if (fabsf(s_diag_balance_perp_f) < SCARGO_BALANCE_DEADZONE_DEG &&
+        fabsf(d_tilt) * SCARGO_DIAG_BALANCE_KD_MM_PER_DPS < SCARGO_BALANCE_DEADZONE_DEG) {
         return;
     }
 
-    float correction_mm = -s_diag_balance_perp_f * SCARGO_DIAG_BALANCE_GAIN_MM_PER_DEG;
+    float correction_mm = -(s_diag_balance_perp_f * SCARGO_DIAG_BALANCE_KP_MM_PER_DEG
+                            + d_tilt               * SCARGO_DIAG_BALANCE_KD_MM_PER_DPS);
     correction_mm = clampf_local(correction_mm,
                                   -SCARGO_DIAG_BALANCE_MAX_OFFSET_MM,
                                    SCARGO_DIAG_BALANCE_MAX_OFFSET_MM);
@@ -827,7 +836,8 @@ static void begin_diagonal_stand_transition(robot_posture_t posture)
             target_feet[leg].z_mm = step_height;
         }
     }
-    s_diag_balance_perp_f = 0.0f;
+    s_diag_balance_perp_f    = 0.0f;
+    s_diag_balance_prev_tilt = 0.0f;
     begin_posture_transition(posture, s_current_height_mm, target_feet, &(body_pose_t){0}, 0.0f);
 }
 
