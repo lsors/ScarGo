@@ -85,10 +85,15 @@
 // 归一化值（-1~1），绝对值小于该值时视为零输入，防止摇杆漂移
 #define SCARGO_RC_DEADZONE 0.04f
 
-// ── 平衡 PID 激活条件 ─────────────────────────────────────────────────────────
+// ── 平衡控制激活条件 ──────────────────────────────────────────────────────────
 #define SCARGO_BALANCE_IDLE_S              2.0f   // 所有摇杆静止多少秒后才激活平衡控制
 #define SCARGO_BALANCE_THROTTLE_THRESHOLD  0.02f  // 油门单帧变化量超过此值视为在打杆
-#define SCARGO_BALANCE_DEADZONE_DEG        1.5f   // 姿态偏差小于此角度不做补偿（过滤微振）
+#define SCARGO_BALANCE_DEADZONE_DEG        2.0f   // 姿态偏差小于此角度不做补偿（过滤微振）
+// 每帧最大跟踪速率（度/帧，100Hz）：限制舵机单帧运动量防止电流峰值/欠压
+// 3.0 deg/tick = 300 deg/s，足够跟上手持晃动，同时避免瞬间大电流
+#define SCARGO_BALANCE_RATE_DEG_PER_TICK   3.0f
+// 补偿增益：1.0 = 完全补偿，超出时因舵机延迟易产生振荡；0.7 为保守稳定起点
+#define SCARGO_BALANCE_GAIN                1.0f
 
 // ── 平衡 PID 增益（普通站立 / 行走模式）─────────────────────────────────────
 // PID 对 IMU 实测姿态与目标姿态的偏差进行补偿，输出叠加到机身姿态上
