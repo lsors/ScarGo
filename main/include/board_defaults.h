@@ -85,6 +85,18 @@
 // 归一化值（-1~1），绝对值小于该值时视为零输入，防止摇杆漂移
 #define SCARGO_RC_DEADZONE 0.04f
 
+// ── 跳跃控制参数 ──────────────────────────────────────────────────────────────
+#define SCARGO_JUMP_CROUCH_SPEED_MM_S       200.0f  // 蹲下速度 (mm/s)
+#define SCARGO_JUMP_CROUCH_HOLD_TICKS        20     // 蹲到位后保持帧数（100Hz → 200ms）
+#define SCARGO_JUMP_LAUNCH_SPEED_MM_S       600.0f  // 起跳伸腿速度 (mm/s)，全速冲
+#define SCARGO_JUMP_LAUNCH_TICKS             12     // 起跳阶段帧数（100Hz → 120ms）
+#define SCARGO_JUMP_AIRBORNE_TIMEOUT_TICKS  100     // 腾空等待超时保护（100Hz → 1s）
+#define SCARGO_JUMP_LAND_ACCEL_G            1.8f    // 落地检测阈值：accel_z_g 超过此值视为着陆
+#define SCARGO_JUMP_BUFFER_SPEED_MM_PER_G   100.0f  // 缓冲系数：每额外 1g 冲击对应的下压速度 (mm/s)
+#define SCARGO_JUMP_BUFFER_SETTLE_G          0.2f   // 缓冲稳定阈值：excess_g 低于此值视为冲击消散
+#define SCARGO_JUMP_BUFFER_SETTLE_TICKS       8     // 缓冲稳定所需连续帧数
+#define SCARGO_JUMP_RECOVER_SPEED_MM_S       60.0f  // 恢复站立速度 (mm/s)
+
 // ── 调试开关 ──────────────────────────────────────────────────────────────────
 // 取消注释以开启站立模式姿态调试日志（每 200ms 一条，用于验证 RC/IMU/body_pose 符号一致性）
 // #define SCARGO_POSE_DEBUG_LOG

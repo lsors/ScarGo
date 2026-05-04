@@ -33,7 +33,16 @@ typedef enum {
     ROBOT_POSTURE_LIE = 1,
     ROBOT_POSTURE_DIAGONAL_A = 2,  // FR(0)+RL(3) 着地，FL(1)+RR(2) 抬起
     ROBOT_POSTURE_DIAGONAL_B = 3,  // FL(1)+RR(2) 着地，FR(0)+RL(3) 抬起
+    ROBOT_POSTURE_JUMP = 4,
 } robot_posture_t;
+
+typedef enum {
+    JUMP_PHASE_CROUCH = 0,  // 快速蹲下并保持
+    JUMP_PHASE_LAUNCH,      // 全速伸腿起跳
+    JUMP_PHASE_AIRBORNE,    // 腾空等待落地信号
+    JUMP_PHASE_BUFFER,      // 落地缓冲：用 accel_z_g 驱动下压
+    JUMP_PHASE_RECOVER,     // 缓冲后缓慢起身
+} jump_phase_t;
 
 typedef enum {
     WALK_PHASE_IDLE = 0,
@@ -92,6 +101,7 @@ static void log_all_calf_outputs(const char *label,
 }
 static bool s_servo_enabled;
 static int16_t s_last_aux_sa;
+static int16_t s_last_aux_sb;
 static int16_t s_last_aux_sc;
 static int16_t s_last_aux_sd;
 static float s_calibration_start_angles[SCARGO_LEG_COUNT][SCARGO_JOINTS_PER_LEG];
@@ -127,6 +137,8 @@ static float    s_balance_roll_f;     // 站立模式速率限制 roll（°）
 static float    s_balance_pitch_f;    // 站立模式速率限制 pitch（°）
 static float    s_diag_balance_perp_f;      // 对角站立：速率限制后的垂直倾斜量（°，用于 P 项）
 static float    s_diag_balance_prev_tilt;   // 对角站立：上帧原始垂直倾斜量（°，用于 D 项）
+static jump_phase_t s_jump_phase;           // 跳跃当前阶段
+static uint32_t     s_jump_ticks;           // 当前阶段已经历的帧数
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -875,6 +887,106 @@ static void apply_diagonal_stand_pose(const rc_command_t *command, const attitud
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
+static void begin_jump(void)
+{
+    s_posture              = ROBOT_POSTURE_JUMP;
+    s_jump_phase           = JUMP_PHASE_CROUCH;
+    s_jump_ticks           = 0;
+    s_current_body_pose    = (body_pose_t){0};
+    s_balance_active       = false;
+    s_balance_idle_ticks   = 0;
+    ESP_LOGI(TAG, "Jump: CROUCH (h=%.1f)", s_current_height_mm);
+}
+
+// 跳跃控制。
+//
+// 阶段流程：CROUCH → LAUNCH → AIRBORNE → BUFFER → RECOVER → STAND
+//
+// BUFFER 阶段用 accel_z_g 驱动下压速度：
+//   excess_g = accel_z_g - 1.0（超出静止重力的部分）
+//   height -= excess_g * BUFFER_SPEED * dt   → 冲击越大下压越快，柔化落地刚性
+static void apply_jump_pose(const attitude_state_t *attitude)
+{
+    const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
+
+    fill_mid_pose(s_target_angles);
+    copy_feet(s_current_feet_world, s_default_feet_world);
+
+    switch (s_jump_phase) {
+
+    case JUMP_PHASE_CROUCH:
+        s_current_height_mm = move_towards(s_current_height_mm,
+                                            s_config.gait.stand_height_min_mm,
+                                            SCARGO_JUMP_CROUCH_SPEED_MM_S * dt_s);
+        if (fabsf(s_current_height_mm - s_config.gait.stand_height_min_mm) < 1.0f) {
+            if (++s_jump_ticks >= SCARGO_JUMP_CROUCH_HOLD_TICKS) {
+                s_jump_phase = JUMP_PHASE_LAUNCH;
+                s_jump_ticks = 0;
+                ESP_LOGI(TAG, "Jump: LAUNCH");
+            }
+        }
+        break;
+
+    case JUMP_PHASE_LAUNCH:
+        s_current_height_mm = move_towards(s_current_height_mm,
+                                            s_config.gait.stand_height_max_mm,
+                                            SCARGO_JUMP_LAUNCH_SPEED_MM_S * dt_s);
+        if (++s_jump_ticks >= SCARGO_JUMP_LAUNCH_TICKS) {
+            s_jump_phase = JUMP_PHASE_AIRBORNE;
+            s_jump_ticks = 0;
+            ESP_LOGI(TAG, "Jump: AIRBORNE");
+        }
+        break;
+
+    case JUMP_PHASE_AIRBORNE:
+        s_jump_ticks++;
+        if (attitude->ready && attitude->accel_z_g > SCARGO_JUMP_LAND_ACCEL_G) {
+            s_jump_phase = JUMP_PHASE_BUFFER;
+            s_jump_ticks = 0;
+            ESP_LOGI(TAG, "Jump: BUFFER (accel_z=%.2fg)", attitude->accel_z_g);
+        } else if (s_jump_ticks >= SCARGO_JUMP_AIRBORNE_TIMEOUT_TICKS) {
+            s_jump_phase = JUMP_PHASE_BUFFER;
+            s_jump_ticks = 0;
+            ESP_LOGI(TAG, "Jump: BUFFER (timeout)");
+        }
+        break;
+
+    case JUMP_PHASE_BUFFER: {
+        float excess_g = 0.0f;
+        if (attitude->ready) {
+            excess_g = fmaxf(0.0f, attitude->accel_z_g - 1.0f);
+        }
+        s_current_height_mm -= excess_g * SCARGO_JUMP_BUFFER_SPEED_MM_PER_G * dt_s;
+        s_current_height_mm  = fmaxf(s_current_height_mm, s_config.gait.stand_height_min_mm);
+
+        if (excess_g < SCARGO_JUMP_BUFFER_SETTLE_G) {
+            if (++s_jump_ticks >= SCARGO_JUMP_BUFFER_SETTLE_TICKS) {
+                s_jump_phase = JUMP_PHASE_RECOVER;
+                s_jump_ticks = 0;
+                ESP_LOGI(TAG, "Jump: RECOVER (h=%.1fmm)", s_current_height_mm);
+            }
+        } else {
+            s_jump_ticks = 0;
+        }
+        break;
+    }
+
+    case JUMP_PHASE_RECOVER:
+        s_current_height_mm = move_towards(s_current_height_mm,
+                                            s_config.gait.stand_height_default_mm,
+                                            SCARGO_JUMP_RECOVER_SPEED_MM_S * dt_s);
+        if (fabsf(s_current_height_mm - s_config.gait.stand_height_default_mm) < 1.0f) {
+            s_posture           = ROBOT_POSTURE_STAND;
+            s_current_body_pose = (body_pose_t){0};
+            ESP_LOGI(TAG, "Jump: COMPLETE");
+        }
+        break;
+    }
+
+    body_pose_t pose = s_current_body_pose;
+    solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &pose);
+}
+
 // 站立模式控制。
 //
 // 站立模式的核心约束是：
@@ -1551,6 +1663,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
 
     if (!s_servo_enabled) {
         s_last_aux_sa = command->aux_sa;
+        s_last_aux_sb = command->aux_sb;
         s_last_aux_sd = command->aux_sd;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
@@ -1578,6 +1691,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             apply_stand_pose(&hold_command, attitude);
             update_fan_auto_context(command->link_up);
             s_last_aux_sa = command->aux_sa;
+            s_last_aux_sb = command->aux_sb;
             s_last_aux_sc = command->aux_sc;
             s_last_aux_sd = command->aux_sd;
             xSemaphoreGiveRecursive(s_state_mutex);
@@ -1603,6 +1717,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         }
         update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
+        s_last_aux_sb = command->aux_sb;
         s_last_aux_sd = command->aux_sd;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
@@ -1627,6 +1742,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         }
         update_fan_auto_context(command->link_up);
         s_last_aux_sa = command->aux_sa;
+        s_last_aux_sb = command->aux_sb;
         s_last_aux_sd = command->aux_sd;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
@@ -1643,6 +1759,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
         update_fan_auto_context(command->link_up);
+        s_last_aux_sb = command->aux_sb;
         s_last_aux_sc = command->aux_sc;
         s_last_aux_sd = command->aux_sd;
         xSemaphoreGiveRecursive(s_state_mutex);
@@ -1750,9 +1867,21 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_pending_action = ROBOT_ACTION_NONE;
     }
 
+    /*
+     * SB 上升沿触发跳跃（仅在普通站立、非行走、非标定、无过渡中响应）
+     * SB 在行走模式下用作步速控制，在站立模式下空闲，复用作跳跃触发。
+     */
+    if (!command->walk_mode && s_mode != ROBOT_MODE_WALK &&
+        command->aux_sb > 0 && s_last_aux_sb <= 0 &&
+        s_posture == ROBOT_POSTURE_STAND && !s_transition_active &&
+        !s_calibration_mode_active) {
+        begin_jump();
+    }
+
     if (command->walk_mode) {
         if (s_posture == ROBOT_POSTURE_LIE ||
-            s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B) {
+            s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B ||
+            s_posture == ROBOT_POSTURE_JUMP) {
             begin_posture_transition(ROBOT_POSTURE_STAND,
                                      body_height_from_throttle(command),
                                      s_default_feet_world,
@@ -1777,6 +1906,8 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         apply_lie_hold_pose();
     } else if ((s_posture == ROBOT_POSTURE_DIAGONAL_A || s_posture == ROBOT_POSTURE_DIAGONAL_B) && !s_transition_active) {
         apply_diagonal_stand_pose(command, attitude);
+    } else if (s_posture == ROBOT_POSTURE_JUMP) {
+        apply_jump_pose(attitude);
     } else if (s_mode == ROBOT_MODE_STAND || s_walk_phase == WALK_PHASE_IDLE) {
         apply_stand_pose(command, attitude);
     } else {
@@ -1819,6 +1950,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
 
     s_last_aux_sa = command->aux_sa;
+    s_last_aux_sb = command->aux_sb;
     s_last_aux_sc = command->aux_sc;
     s_last_aux_sd = command->aux_sd;
     xSemaphoreGiveRecursive(s_state_mutex);

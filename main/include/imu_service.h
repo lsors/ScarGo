@@ -11,6 +11,7 @@ typedef struct {
     float roll_rate_dps;   // 横滚角速率（度/秒）
     float pitch_rate_dps;  // 俯仰角速率（度/秒）
     float yaw_rate_dps;    // 偏航角速率（度/秒）
+    float accel_z_g;       // Z 轴加速度（g，机身坐标，静止≈+1g，腾空≈0g，落地冲击>>1g）
     bool  ready;           // 数据是否有效（IMU 初始化成功且至少完成一次滤波后为 true）
 } attitude_state_t;
 

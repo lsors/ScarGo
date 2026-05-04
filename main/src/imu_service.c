@@ -168,6 +168,7 @@ void imu_service_tick(void)
     s_attitude.roll_rate_dps = gx;
     s_attitude.pitch_rate_dps = gy;
     s_attitude.yaw_rate_dps = gz;
+    s_attitude.accel_z_g = az;
     s_attitude.ready = true;
 
     s_log_ticks++;
