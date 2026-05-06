@@ -133,12 +133,23 @@ static float    s_prev_pitch_error;
 static bool     s_balance_active;
 static float    s_prev_throttle;
 static uint32_t s_balance_idle_ticks;
-static float    s_balance_roll_f;     // 站立模式速率限制 roll（°）
-static float    s_balance_pitch_f;    // 站立模式速率限制 pitch（°）
+static float    s_balance_roll_corr;  // 当前已施加的 roll 修正量（渐进逼近）
+static float    s_balance_pitch_corr; // 当前已施加的 pitch 修正量
+
+/* 姿态滑动平均滤波：环形缓冲 + 运行和，O(1) 更新 */
+#define BALANCE_FILTER_SAMPLES  (SCARGO_BALANCE_FILTER_MS * SCARGO_CONTROL_RATE_HZ / 1000)
+static float    s_bal_roll_buf[BALANCE_FILTER_SAMPLES];
+static float    s_bal_pitch_buf[BALANCE_FILTER_SAMPLES];
+static int      s_bal_buf_idx;
+static float    s_bal_roll_sum;
+static float    s_bal_pitch_sum;
 static float    s_diag_balance_perp_f;      // 对角站立：速率限制后的垂直倾斜量（°，用于 P 项）
 static float    s_diag_balance_prev_tilt;   // 对角站立：上帧原始垂直倾斜量（°，用于 D 项）
 static jump_phase_t s_jump_phase;           // 跳跃当前阶段
 static uint32_t     s_jump_ticks;           // 当前阶段已经历的帧数
+static float        s_jump_dir_x;           // 本次跳跃方向 X（归一化，前为正）
+static float        s_jump_dir_y;           // 本次跳跃方向 Y（归一化，左为正）
+static float        s_last_stick_mag;       // 上帧右摇杆幅度（方向跳边沿检测）
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -766,8 +777,7 @@ static void apply_balance_diagonal_translate(body_pose_t *pose,
     s_diag_balance_prev_tilt = tilt_perp;
 
     // P 项：速率限制后的倾斜量，平滑驱动平移
-    s_diag_balance_perp_f = move_towards(s_diag_balance_perp_f, tilt_perp,
-                                          SCARGO_BALANCE_RATE_DEG_PER_TICK);
+    s_diag_balance_perp_f = move_towards(s_diag_balance_perp_f, tilt_perp, 1.0f);
 
     if (fabsf(s_diag_balance_perp_f) < SCARGO_BALANCE_DEADZONE_DEG &&
         fabsf(d_tilt) * SCARGO_DIAG_BALANCE_KD_MM_PER_DPS < SCARGO_BALANCE_DEADZONE_DEG) {
@@ -784,44 +794,6 @@ static void apply_balance_diagonal_translate(body_pose_t *pose,
     pose->offset_y_mm = correction_mm * perp_y;
 }
 
-// 站立模式平衡：把 IMU 姿态作为自动姿态目标叠加到 body_pose。
-//
-// 运动学约定（kinematics.h / body_to_leg）：
-//   roll  → 绕 Y 轴：body_to_leg 施加 Ry(-roll)
-//   pitch → 绕 X 轴：body_to_leg 施加 Rx(-pitch)
-//   正向变换顺序（leg→world）：Ry(roll) → Rx(pitch)
-//
-// 因此这里不直接旋转 feet_world，而是复用右摇杆姿态控制的同一条 IK 路径：
-//   feet_world + solved_pose -> kinematics_apply_body_pose()
-//
-// 这样补偿天然围绕身体中心进行：
-//   feet_body_center = feet_world - body_center
-//   feet_leg         = inverse_body_rotation(feet_body_center)
-//
-// roll_f / pitch_f 为调用方维护的速率限制姿态值（始终运行，balance 激活时无冷启动）。
-static void apply_balance_stance_pose(body_pose_t *pose, float roll_f, float pitch_f)
-{
-    if (pose == NULL) {
-        return;
-    }
-
-    // 输入截断：与右摇杆满舵极限对齐，IK 在此范围内已被验证可达
-    roll_f  = fmaxf(-s_config.gait.max_body_roll_deg,  fminf(s_config.gait.max_body_roll_deg,  roll_f));
-    pitch_f = fmaxf(-s_config.gait.max_body_pitch_deg, fminf(s_config.gait.max_body_pitch_deg, pitch_f));
-
-    float roll  = roll_f  * SCARGO_BALANCE_GAIN;
-    float pitch = pitch_f * SCARGO_BALANCE_GAIN;
-    if (fabsf(roll)  < SCARGO_BALANCE_DEADZONE_DEG) roll  = 0.0f;
-    if (fabsf(pitch) < SCARGO_BALANCE_DEADZONE_DEG) pitch = 0.0f;
-    if (roll == 0.0f && pitch == 0.0f) return;
-
-    pose->roll_deg = clampf_local(pose->roll_deg + roll,
-                                  -s_config.gait.max_body_roll_deg,
-                                  s_config.gait.max_body_roll_deg);
-    pose->pitch_deg = clampf_local(pose->pitch_deg - pitch,
-                                   -s_config.gait.max_body_pitch_deg,
-                                   s_config.gait.max_body_pitch_deg);
-}
 
 static const bool s_diagonal_pair_a_support[SCARGO_LEG_COUNT] = {
     [SCARGO_LEG_FRONT_RIGHT] = true,
@@ -887,15 +859,17 @@ static void apply_diagonal_stand_pose(const rc_command_t *command, const attitud
     solve_and_apply_feet(s_current_feet_world, s_current_height_mm, &solved_pose);
 }
 
-static void begin_jump(void)
+static void begin_jump(float dir_x, float dir_y)
 {
-    s_posture              = ROBOT_POSTURE_JUMP;
-    s_jump_phase           = JUMP_PHASE_CROUCH;
-    s_jump_ticks           = 0;
-    s_current_body_pose    = (body_pose_t){0};
-    s_balance_active       = false;
-    s_balance_idle_ticks   = 0;
-    ESP_LOGI(TAG, "Jump: CROUCH (h=%.1f)", s_current_height_mm);
+    s_jump_dir_x         = dir_x;
+    s_jump_dir_y         = dir_y;
+    s_posture            = ROBOT_POSTURE_JUMP;
+    s_jump_phase         = JUMP_PHASE_CROUCH;
+    s_jump_ticks         = 0;
+    s_current_body_pose  = (body_pose_t){0};
+    s_balance_active     = false;
+    s_balance_idle_ticks = 0;
+    ESP_LOGI(TAG, "Jump: CROUCH dir=(%.2f,%.2f) h=%.1f", dir_x, dir_y, s_current_height_mm);
 }
 
 // 跳跃控制。
@@ -931,7 +905,13 @@ static void apply_jump_pose(const attitude_state_t *attitude)
         s_current_height_mm = move_towards(s_current_height_mm,
                                             s_config.gait.stand_height_max_mm,
                                             SCARGO_JUMP_LAUNCH_SPEED_MM_S * dt_s);
+        /* 方向感：起跳阶段机身朝目标方向平移，腾空后归零，不影响足端位置
+         * offset_y_mm 正=前（pitch 分量），offset_x_mm 正=左（roll 分量） */
+        s_current_body_pose.offset_y_mm = s_jump_dir_x * SCARGO_JUMP_BODY_LEAN_MM;
+        s_current_body_pose.offset_x_mm = s_jump_dir_y * SCARGO_JUMP_BODY_LEAN_MM;
         if (++s_jump_ticks >= SCARGO_JUMP_LAUNCH_TICKS) {
+            s_current_body_pose.offset_y_mm = 0.0f;
+            s_current_body_pose.offset_x_mm = 0.0f;
             s_jump_phase = JUMP_PHASE_AIRBORNE;
             s_jump_ticks = 0;
             ESP_LOGI(TAG, "Jump: AIRBORNE");
@@ -976,6 +956,7 @@ static void apply_jump_pose(const attitude_state_t *attitude)
                                             s_config.gait.stand_height_default_mm,
                                             SCARGO_JUMP_RECOVER_SPEED_MM_S * dt_s);
         if (fabsf(s_current_height_mm - s_config.gait.stand_height_default_mm) < 1.0f) {
+            copy_feet(s_current_feet_world, s_default_feet_world);
             s_posture           = ROBOT_POSTURE_STAND;
             s_current_body_pose = (body_pose_t){0};
             ESP_LOGI(TAG, "Jump: COMPLETE");
@@ -1014,7 +995,7 @@ static void reset_balance_pid(void)
     s_pitch_integral   = 0.0f;
     s_prev_roll_error  = 0.0f;
     s_prev_pitch_error = 0.0f;
-    // s_balance_roll_f / s_balance_pitch_f 无需重置：每帧直接赋值，无历史状态
+    // s_balance_roll_corr / s_balance_pitch_corr 无需重置：退出时目标归 0，自然渐进归零
 }
 
 static void apply_stand_pose(const rc_command_t *command, const attitude_state_t *attitude)
@@ -1061,7 +1042,8 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
     bool want_balance = !has_input
                         && (s_balance_idle_ticks >= idle_ticks_required)
                         && !s_transition_active
-                        && (s_posture != ROBOT_POSTURE_LIE);
+                        && (s_posture != ROBOT_POSTURE_LIE)
+                        && (command->aux_sb <= 0);
 
     if (s_balance_active && !want_balance) {
         reset_balance_pid();
@@ -1073,17 +1055,38 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
         ESP_LOGI(TAG, "Balance: on");
     }
 
-    // 速率限制跟踪 IMU 姿态：每帧最多移动 SCARGO_BALANCE_RATE_DEG_PER_TICK 度
-    // 保证响应快速的同时防止多舵机同帧大幅运动引起的电流峰值/欠压重启
+    // 滑动窗口均值（始终更新，保证激活时滤波器已稳定）
     if (attitude->ready) {
-        const float rate = SCARGO_BALANCE_RATE_DEG_PER_TICK;
-        s_balance_roll_f  = move_towards(s_balance_roll_f,  attitude->roll_deg,  rate);
-        s_balance_pitch_f = move_towards(s_balance_pitch_f, attitude->pitch_deg, rate);
+        s_bal_roll_sum  += attitude->roll_deg  - s_bal_roll_buf[s_bal_buf_idx];
+        s_bal_pitch_sum += attitude->pitch_deg - s_bal_pitch_buf[s_bal_buf_idx];
+        s_bal_roll_buf[s_bal_buf_idx]  = attitude->roll_deg;
+        s_bal_pitch_buf[s_bal_buf_idx] = attitude->pitch_deg;
+        s_bal_buf_idx = (s_bal_buf_idx + 1) % BALANCE_FILTER_SAMPLES;
+    }
+    const float roll_avg  = s_bal_roll_sum  / BALANCE_FILTER_SAMPLES;
+    const float pitch_avg = s_bal_pitch_sum / BALANCE_FILTER_SAMPLES;
+
+    // 目标 = 均值角度（1:1 反向补偿），死区内清零；未激活时目标为 0 自然归零
+    float target_roll_corr  = 0.0f;
+    float target_pitch_corr = 0.0f;
+    if (s_balance_active && attitude->ready) {
+        if (fabsf(roll_avg)  >= SCARGO_BALANCE_DEADZONE_DEG) target_roll_corr  = roll_avg;
+        if (fabsf(pitch_avg) >= SCARGO_BALANCE_DEADZONE_DEG) target_pitch_corr = pitch_avg;
     }
 
+    // 固定速率渐进逼近目标，平滑无跳变
+    const float corr_rate = SCARGO_BALANCE_CORRECTION_RATE_DEG_PER_TICK;
+    s_balance_roll_corr  = move_towards(s_balance_roll_corr,  target_roll_corr,  corr_rate);
+    s_balance_pitch_corr = move_towards(s_balance_pitch_corr, target_pitch_corr, corr_rate);
+
     solved_pose = s_current_body_pose;
-    if (s_balance_active) {
-        apply_balance_stance_pose(&solved_pose, s_balance_roll_f, s_balance_pitch_f);
+    if (s_balance_roll_corr != 0.0f || s_balance_pitch_corr != 0.0f) {
+        solved_pose.roll_deg  = clampf_local(solved_pose.roll_deg  + s_balance_roll_corr,
+                                             -s_config.gait.max_body_roll_deg,
+                                              s_config.gait.max_body_roll_deg);
+        solved_pose.pitch_deg = clampf_local(solved_pose.pitch_deg - s_balance_pitch_corr,
+                                             -s_config.gait.max_body_pitch_deg,
+                                              s_config.gait.max_body_pitch_deg);
     }
 
 #ifdef SCARGO_POSE_DEBUG_LOG
@@ -1394,8 +1397,6 @@ void robot_control_init(const system_config_t *config)
     s_balance_active      = false;
     s_prev_throttle       = 0.0f;
     s_balance_idle_ticks  = 0;
-    s_balance_roll_f      = 0.0f;
-    s_balance_pitch_f     = 0.0f;
     reset_balance_pid();
     s_last_aux_sd = 0;
     fill_mid_pose(s_target_angles);
@@ -1660,11 +1661,14 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
     const bool rc_ready_mode = command->link_up && !command->walk_mode &&
                                command->throttle <= -0.95f && command->aux_sd <= 0;
+    const float stick_mag = sqrtf(command->pitch * command->pitch + command->roll * command->roll);
+    const float stick_max = fmaxf(fabsf(command->pitch), fabsf(command->roll)); // 任意单轴最大值，用于满杆检测
 
     if (!s_servo_enabled) {
-        s_last_aux_sa = command->aux_sa;
-        s_last_aux_sb = command->aux_sb;
-        s_last_aux_sd = command->aux_sd;
+        s_last_aux_sa    = command->aux_sa;
+        s_last_aux_sb    = command->aux_sb;
+        s_last_aux_sd    = command->aux_sd;
+        s_last_stick_mag = stick_max;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
@@ -1690,10 +1694,11 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             hold_command.throttle = -1.0f;
             apply_stand_pose(&hold_command, attitude);
             update_fan_auto_context(command->link_up);
-            s_last_aux_sa = command->aux_sa;
-            s_last_aux_sb = command->aux_sb;
-            s_last_aux_sc = command->aux_sc;
-            s_last_aux_sd = command->aux_sd;
+            s_last_aux_sa    = command->aux_sa;
+            s_last_aux_sb    = command->aux_sb;
+            s_last_aux_sc    = command->aux_sc;
+            s_last_aux_sd    = command->aux_sd;
+            s_last_stick_mag = stick_max;
             xSemaphoreGiveRecursive(s_state_mutex);
             return;
         }
@@ -1716,9 +1721,10 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             ESP_LOGI(TAG, "calibration mode active");
         }
         update_fan_auto_context(command->link_up);
-        s_last_aux_sa = command->aux_sa;
-        s_last_aux_sb = command->aux_sb;
-        s_last_aux_sd = command->aux_sd;
+        s_last_aux_sa    = command->aux_sa;
+        s_last_aux_sb    = command->aux_sb;
+        s_last_aux_sd    = command->aux_sd;
+        s_last_stick_mag = stick_max;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
@@ -1741,9 +1747,10 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             ESP_LOGI(TAG, "calibration mode active");
         }
         update_fan_auto_context(command->link_up);
-        s_last_aux_sa = command->aux_sa;
-        s_last_aux_sb = command->aux_sb;
-        s_last_aux_sd = command->aux_sd;
+        s_last_aux_sa    = command->aux_sa;
+        s_last_aux_sb    = command->aux_sb;
+        s_last_aux_sd    = command->aux_sd;
+        s_last_stick_mag = stick_max;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
@@ -1759,9 +1766,10 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         s_walk_phase = WALK_PHASE_IDLE;
         s_walk_phase_progress = 0.0f;
         update_fan_auto_context(command->link_up);
-        s_last_aux_sb = command->aux_sb;
-        s_last_aux_sc = command->aux_sc;
-        s_last_aux_sd = command->aux_sd;
+        s_last_aux_sb    = command->aux_sb;
+        s_last_aux_sc    = command->aux_sc;
+        s_last_aux_sd    = command->aux_sd;
+        s_last_stick_mag = stick_max;
         xSemaphoreGiveRecursive(s_state_mutex);
         return;
     }
@@ -1868,14 +1876,29 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
     }
 
     /*
-     * SB 上升沿触发跳跃（仅在普通站立、非行走、非标定、无过渡中响应）
-     * SB 在行走模式下用作步速控制，在站立模式下空闲，复用作跳跃触发。
+     * 跳跃触发（仅在普通站立、非行走、非标定、无过渡中响应）
+     * SB 拨至上档（aux_sb > 0）为跳跃模式：
+     *   - 直跳：SB 上升沿 + 右摇杆在死区内 → dir=(0,0)
+     *   - 方向跳：SB 保持上档 + 摇杆幅度穿越阈值上升沿 → 方向由摇杆决定
      */
-    if (!command->walk_mode && s_mode != ROBOT_MODE_WALK &&
-        command->aux_sb > 0 && s_last_aux_sb <= 0 &&
-        s_posture == ROBOT_POSTURE_STAND && !s_transition_active &&
-        !s_calibration_mode_active) {
-        begin_jump();
+    {
+        bool sb_up   = (command->aux_sb > 0);
+        bool sb_rise = (command->aux_sb > 0 && s_last_aux_sb <= 0);
+        bool stick_rise = (s_last_stick_mag <= SCARGO_JUMP_STICK_THRESHOLD &&
+                           stick_max > SCARGO_JUMP_STICK_THRESHOLD);
+
+        if (!command->walk_mode && s_mode != ROBOT_MODE_WALK &&
+            sb_up && (sb_rise || stick_rise) &&
+            s_posture == ROBOT_POSTURE_STAND && !s_transition_active &&
+            !s_calibration_mode_active) {
+            float dir_x = 0.0f, dir_y = 0.0f;
+            if (stick_max > SCARGO_JUMP_STICK_THRESHOLD) {
+                /* dir_x = 前后分量（pitch 前=正），dir_y = 左右分量（roll 左=正，offset_x 实际效果负=左） */
+                dir_x =  command->pitch / stick_mag;
+                dir_y = -command->roll  / stick_mag;
+            }
+            begin_jump(dir_x, dir_y);
+        }
     }
 
     if (command->walk_mode) {
@@ -1949,9 +1972,10 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
         }
     }
 
-    s_last_aux_sa = command->aux_sa;
-    s_last_aux_sb = command->aux_sb;
-    s_last_aux_sc = command->aux_sc;
-    s_last_aux_sd = command->aux_sd;
+    s_last_aux_sa    = command->aux_sa;
+    s_last_aux_sb    = command->aux_sb;
+    s_last_aux_sc    = command->aux_sc;
+    s_last_aux_sd    = command->aux_sd;
+    s_last_stick_mag = stick_mag;
     xSemaphoreGiveRecursive(s_state_mutex);
 }

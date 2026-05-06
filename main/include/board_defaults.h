@@ -96,20 +96,23 @@
 #define SCARGO_JUMP_BUFFER_SETTLE_G          0.2f   // 缓冲稳定阈值：excess_g 低于此值视为冲击消散
 #define SCARGO_JUMP_BUFFER_SETTLE_TICKS       8     // 缓冲稳定所需连续帧数
 #define SCARGO_JUMP_RECOVER_SPEED_MM_S       60.0f  // 恢复站立速度 (mm/s)
+#define SCARGO_JUMP_BODY_LEAN_MM             15.0f  // 方向跳起跳阶段机身平移量（mm），产生朝向感
+#define SCARGO_JUMP_STICK_THRESHOLD          0.95f  // 右摇杆单轴满杆阈值：任意轴超过此值触发方向跳
 
 // ── 调试开关 ──────────────────────────────────────────────────────────────────
 // 取消注释以开启站立模式姿态调试日志（每 200ms 一条，用于验证 RC/IMU/body_pose 符号一致性）
-// #define SCARGO_POSE_DEBUG_LOG
+#define SCARGO_POSE_DEBUG_LOG
 
 // ── 平衡控制激活条件 ──────────────────────────────────────────────────────────
 #define SCARGO_BALANCE_IDLE_S              2.0f   // 所有摇杆静止多少秒后才激活平衡控制
 #define SCARGO_BALANCE_THROTTLE_THRESHOLD  0.02f  // 油门单帧变化量超过此值视为在打杆
 #define SCARGO_BALANCE_DEADZONE_DEG        2.0f   // 姿态偏差小于此角度不做补偿（过滤微振）
-// 每帧最大跟踪速率（度/帧，100Hz）：限制舵机单帧运动量防止电流峰值/欠压
-// 3.0 deg/tick = 300 deg/s，足够跟上手持晃动，同时避免瞬间大电流
-#define SCARGO_BALANCE_RATE_DEG_PER_TICK   3.0f
-// 补偿增益：1.0 = 完全补偿，超出时因舵机延迟易产生振荡；0.7 为保守稳定起点
-#define SCARGO_BALANCE_GAIN                1.0f
+// 姿态滑动平均窗口（ms）：用该时间内的均值作为修正目标，滤除高频抖动
+// 越大越平滑但响应越慢；200ms = 20 个采样点（100Hz）
+#define SCARGO_BALANCE_FILTER_MS  500
+// 平衡修正量每帧最大变化量（度/帧，100Hz = 该值 × 100 °/s）
+// 倾斜多少度目标就是多少度（1:1 映射），此速率控制逼近快慢
+#define SCARGO_BALANCE_CORRECTION_RATE_DEG_PER_TICK  0.3f
 
 // ── 平衡 PID 增益（行走模式）─────────────────────────────────────────────────
 // 普通四脚站立模式使用 body_pose 姿态反解；这组 PID 当前保留给行走/过渡姿态补偿。
