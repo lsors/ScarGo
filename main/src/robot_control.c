@@ -1038,12 +1038,14 @@ static void apply_stand_pose(const rc_command_t *command, const attitude_state_t
     } else if (s_balance_idle_ticks < idle_ticks_required) {
         s_balance_idle_ticks++;
     }
-
+/*平衡控制暂时禁用
     bool want_balance = !has_input
                         && (s_balance_idle_ticks >= idle_ticks_required)
                         && !s_transition_active
                         && (s_posture != ROBOT_POSTURE_LIE)
-                        && (command->aux_sb <= 0);
+                        && (command->aux_sb <= 0);    
+*/
+    bool want_balance = false; /* 平衡控制暂时禁用 */
 
     if (s_balance_active && !want_balance) {
         reset_balance_pid();
@@ -1180,7 +1182,7 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
             feet_world[leg].x_mm += (0.5f - phase_local) * leg_step_x;
         }
     }
-    apply_balance(pose, attitude);
+    /* apply_balance(pose, attitude); */ /* 平衡控制暂时禁用 */
 }
 
 static void begin_walk_start_transition(const rc_command_t *command, const attitude_state_t *attitude, float cycle_s)
