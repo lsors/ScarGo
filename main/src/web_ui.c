@@ -923,6 +923,7 @@ void web_ui_start(system_config_t *config)
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.max_uri_handlers = 28;
     server_config.recv_wait_timeout = 30;
+    server_config.stack_size = 8192;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &server_config));
 

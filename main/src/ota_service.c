@@ -40,7 +40,7 @@ esp_err_t ota_service_handle_upload(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
     }
 
-    char buf[1024];
+    static char buf[1024];
     int remaining = req->content_len;
     bool failed = false;
 
