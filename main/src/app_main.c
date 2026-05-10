@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 #include "storage_service.h"
+#include "version.h"
 
 static const char *TAG = "scargo_app";
 static system_config_t s_config;
@@ -36,6 +37,8 @@ static void configure_cpu_frequency(void)
 void app_main(void)
 {
     log_service_init();
+
+    ESP_LOGI(TAG, "ScarGo firmware v%s", SCARGO_FW_VERSION_STR);
 
     /* 启动诊断：打印当前运行分区，用于验证 OTA 后是否切换成功 */
     const esp_partition_t *running = esp_ota_get_running_partition();
