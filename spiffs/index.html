@@ -1994,6 +1994,10 @@
               setTimeout(() => location.reload(), 1200);
             })
             .catch(() => {});
+          if (elapsed >= 60) {
+            clearInterval(poll);
+            location.reload();
+          }
         }, 2000);
       }
 
