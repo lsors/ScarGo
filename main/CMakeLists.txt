@@ -31,6 +31,7 @@ idf_component_register(
 idf_build_get_property(python PYTHON)
 add_custom_target(version_bump ALL
     COMMAND ${python} ${CMAKE_SOURCE_DIR}/version_bump.py
+    BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/include/version.h
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Bumping firmware version..."
     VERBATIM
