@@ -171,6 +171,7 @@ void imu_service_tick(void)
     s_attitude.accel_z_g = az;
     s_attitude.ready = true;
 
+    /* IMU 周期日志暂时关闭
     s_log_ticks++;
     if (s_log_ticks >= SCARGO_IMU_RATE_HZ) {
         s_log_ticks = 0;
@@ -186,6 +187,7 @@ void imu_service_tick(void)
                  ay,
                  az);
     }
+    */
 }
 
 attitude_state_t imu_service_get_attitude(void)

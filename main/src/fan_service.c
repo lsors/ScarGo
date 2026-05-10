@@ -210,6 +210,7 @@ void fan_service_tick(void)
         s_status.rpm = 0;
     }
 
+    /* 风扇转速日志暂时关闭
     uint32_t log_elapsed_ms = (uint32_t)((now - s_last_log_tick) * portTICK_PERIOD_MS);
     if (log_elapsed_ms >= SCARGO_FAN_LOG_INTERVAL_MS) {
         int tach_level = (s_tach_gpio >= 0) ? gpio_get_level((gpio_num_t)s_tach_gpio) : -1;
@@ -224,6 +225,7 @@ void fan_service_tick(void)
                  (int)s_status.effective_level);
         s_last_log_tick = now;
     }
+    */
 
     s_last_tach_edge_count = edge_count;
     s_last_sample_tick = now;
