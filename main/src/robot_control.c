@@ -150,6 +150,8 @@ static uint32_t     s_jump_ticks;           // 当前阶段已经历的帧数
 static float        s_jump_dir_x;           // 本次跳跃方向 X（归一化，前为正）
 static float        s_jump_dir_y;           // 本次跳跃方向 Y（归一化，左为正）
 static float        s_last_stick_mag;       // 上帧右摇杆幅度（方向跳边沿检测）
+static scargo_gait_mode_t s_gait_mode = SCARGO_GAIT_MODE_DIAGONAL;  // 当前步态模式
+static float        s_effective_stance_ratio = 0.5f;  // 当前有效的支撑相占比（用于足端生成）
 static SemaphoreHandle_t s_state_mutex;
 
 static void copy_feet(vec3f_t dst[SCARGO_LEG_COUNT], const vec3f_t src[SCARGO_LEG_COUNT]);
@@ -1126,21 +1128,41 @@ static float cycloid_phase(float phase)
 
 // 计算某条腿在主相位 phase 下的组相位（归一化到 [0, 1)）。
 //
-// 对角腿分组：
+// 对角步态：
 //   - FRONT_RIGHT / REAR_LEFT 为主相位组（偏移量 0）
 //   - FRONT_LEFT  / REAR_RIGHT 滞后半个周期（偏移量 0.5）
-// diagonal_phase_offset 仅作用于右侧腿，用于微调左右组的相对相位差。
+//
+// 波形步态（交叉腿连续摆动）：
+//   - FR(0) → RL(3) → FL(1) → RR(2) 连续摆动
+//   - 每条腿间隔 0.25 的相位
 static float leg_group_phase(int leg, float phase)
 {
-    float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
-    if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
-        group_phase += s_config.gait.diagonal_phase_offset;
+    if (s_gait_mode == SCARGO_GAIT_MODE_WAVE) {
+        // 波形步态：交叉腿连续顺序 FR(0)→RL(3)→FL(1)→RR(2)
+        float leg_offsets[SCARGO_LEG_COUNT] = {
+            [SCARGO_LEG_FRONT_RIGHT] = 0.0f,   // FR: 第1个摆
+            [SCARGO_LEG_REAR_LEFT]   = 0.25f,  // RL: 第2个摆
+            [SCARGO_LEG_FRONT_LEFT]  = 0.5f,   // FL: 第3个摆
+            [SCARGO_LEG_REAR_RIGHT]  = 0.75f,  // RR: 第4个摆
+        };
+        float group_phase = phase + leg_offsets[leg];
+        group_phase = fmodf(group_phase, 1.0f);
+        if (group_phase < 0.0f) {
+            group_phase += 1.0f;
+        }
+        return group_phase;
+    } else {
+        // 对角步态：两腿同时摆动
+        float group_phase = phase + ((leg == SCARGO_LEG_FRONT_RIGHT || leg == SCARGO_LEG_REAR_LEFT) ? 0.0f : 0.5f);
+        if (leg == SCARGO_LEG_REAR_RIGHT || leg == SCARGO_LEG_FRONT_RIGHT) {
+            group_phase += s_config.gait.diagonal_phase_offset;
+        }
+        group_phase = fmodf(group_phase, 1.0f);
+        if (group_phase < 0.0f) {
+            group_phase += 1.0f;
+        }
+        return group_phase;
     }
-    group_phase = fmodf(group_phase, 1.0f);
-    if (group_phase < 0.0f) {
-        group_phase += 1.0f;
-    }
-    return group_phase;
 }
 
 // 按某一时刻的步态相位，生成四条腿的目标足端。
@@ -1164,20 +1186,26 @@ static void apply_walk_feet_for_phase(const rc_command_t *command, const attitud
 
     for (int leg = 0; leg < SCARGO_LEG_COUNT; ++leg) {
         float group_phase = leg_group_phase(leg, phase);
-        bool in_swing = group_phase >= s_config.gait.stance_ratio;
+        bool in_swing = group_phase >= s_effective_stance_ratio;
         float phase_local;
         float side_sign = SCARGO_BODY_SIDE_SIGN(leg);
         float leg_step_y = step_vec_y + side_sign * yaw_diff_y;
         float leg_step_x = step_vec_x;
 
         if (in_swing) {
-            phase_local = (group_phase - s_config.gait.stance_ratio) / fmaxf(1.0f - s_config.gait.stance_ratio, 0.01f);
+            phase_local = (group_phase - s_effective_stance_ratio) / fmaxf(1.0f - s_effective_stance_ratio, 0.01f);
             float cycloid = cycloid_phase(phase_local);
             feet_world[leg].y_mm += (-0.5f + cycloid) * leg_step_y;
             feet_world[leg].x_mm += (-0.5f + cycloid) * leg_step_x;
             feet_world[leg].z_mm += step_height * sinf((float)M_PI * phase_local);
+            // 波形步态：抬腿时机身向对侧横向平移，使重心保持在三角支撑面内。
+            // 平移量 = W/3（W=足端横向半宽），包络 sin(π·t) 保证端点无跳变。
+            if (s_gait_mode == SCARGO_GAIT_MODE_WAVE) {
+                float shift_env = sinf((float)M_PI * phase_local);
+                pose->offset_x_mm -= SCARGO_BODY_SIDE_SIGN(leg) * SCARGO_WAVE_SHIFT_X_MM * shift_env;
+            }
         } else {
-            phase_local = group_phase / fmaxf(s_config.gait.stance_ratio, 0.01f);
+            phase_local = group_phase / fmaxf(s_effective_stance_ratio, 0.01f);
             feet_world[leg].y_mm += (0.5f - phase_local) * leg_step_y;
             feet_world[leg].x_mm += (0.5f - phase_local) * leg_step_x;
         }
@@ -1256,11 +1284,29 @@ static bool phase_crossed_target(float previous_phase, float current_phase, floa
 // 1. WALK_START  : 起步过渡
 // 2. WALK_STEADY : 稳态周期行走
 // 3. WALK_STOP   : 预留给优雅收步，当前主要通过切回统一姿态过渡实现
+//
+// SB 档位控制：
+// - SB 低档或中档：对角步态（stance_ratio = 0.5）
+// - SB 高档：波形步态（stance_ratio = 0.75），3腿支撑+1腿摆动
 static void apply_walk_pose(const rc_command_t *command, const attitude_state_t *attitude)
 {
     static uint32_t steady_tick;
     static float previous_steady_phase = SCARGO_WALK_REFERENCE_PHASE;
     const float dt_s = 1.0f / (float)SCARGO_CONTROL_RATE_HZ;
+
+    // 根据 SB 档位切换步态模式和支撑相占比
+    scargo_gait_mode_t target_gait_mode = SCARGO_GAIT_MODE_DIAGONAL;
+    if (command->aux_sb > 0) {
+        // SB 高档：启用波形步态
+        target_gait_mode = SCARGO_GAIT_MODE_WAVE;
+    }
+    s_gait_mode = target_gait_mode;
+
+    // 根据步态模式设置有效的 stance_ratio
+    s_effective_stance_ratio = (s_gait_mode == SCARGO_GAIT_MODE_WAVE)
+        ? SCARGO_WAVE_GAIT_STANCE_RATIO
+        : s_config.gait.stance_ratio;
+
     float step_height = walk_step_height_from_throttle(command);
     float stride = step_height * s_config.gait.step_scale;
     float cycle = fmaxf(gait_cycle_effective_ms(command) / 1000.0f, 0.15f);
@@ -1883,6 +1929,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
      *   - 直跳：SB 上升沿 + 右摇杆在死区内 → dir=(0,0)
      *   - 方向跳：SB 保持上档 + 摇杆幅度穿越阈值上升沿 → 方向由摇杆决定
      */
+#if 0
     {
         bool sb_up   = (command->aux_sb > 0);
         bool sb_rise = (command->aux_sb > 0 && s_last_aux_sb <= 0);
@@ -1902,6 +1949,7 @@ void robot_control_control_tick(const rc_command_t *command, const attitude_stat
             begin_jump(dir_x, dir_y);
         }
     }
+#endif
 
     if (command->walk_mode) {
         if (s_posture == ROBOT_POSTURE_LIE ||

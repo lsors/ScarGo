@@ -42,9 +42,23 @@
 // ── 支撑相比例 ────────────────────────────────────────────────────────────────
 // stance_ratio = 一个步态周期中"脚在地上"的时间占比
 // 对角步态下最小为 0.5（两腿同时支撑），越大越稳但步速越慢
+// 波形步态下最高可达 0.75（摆动相 0.25，4腿各占 0.25，任意时刻最多1腿摆动）
 #define SCARGO_DEFAULT_STANCE_RATIO 0.5f
 #define SCARGO_MIN_STANCE_RATIO     0.5f
-#define SCARGO_MAX_STANCE_RATIO     0.8f
+#define SCARGO_MAX_STANCE_RATIO     0.75f
+#define SCARGO_WAVE_GAIT_STANCE_RATIO 0.75f
+// 波形步态抬腿时的机身横向平移量（mm）。
+// 某条腿摆动时，机身向对侧平移，使重心回到三角支撑面内。
+// 值由足端横向半宽 W = body_width/2 + shoulder = 85mm 推导：
+//   三角形重心偏移 = W/3 ≈ 28mm
+#define SCARGO_WAVE_SHIFT_X_MM 0.0f//不要平移了，感觉不太对劲，先关掉
+
+// ── 步态模式 ──────────────────────────────────────────────────────────────────
+// 行走模式支持两种步态
+typedef enum {
+    SCARGO_GAIT_MODE_DIAGONAL = 0,  // 对角步态：两腿同时摆动
+    SCARGO_GAIT_MODE_WAVE = 1,      // 波形步态：4腿连续摆动，交叉对顺序（3腿支撑+1腿摆动）
+} scargo_gait_mode_t;
 
 // ── 步态相位 / 机身姿态极限 ───────────────────────────────────────────────────
 // diagonal_phase_offset: 对角步态中后对角腿相对前对角腿的相位偏移（0 = 标准同步）
