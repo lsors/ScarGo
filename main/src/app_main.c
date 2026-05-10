@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_pm.h"
 #include "log_service.h"
 #include "nvs_flash.h"
@@ -35,6 +36,15 @@ static void configure_cpu_frequency(void)
 void app_main(void)
 {
     log_service_init();
+
+    /* 启动诊断：打印当前运行分区，用于验证 OTA 后是否切换成功 */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot    = esp_ota_get_boot_partition();
+    ESP_LOGI(TAG, "Boot partition  : %s (offset=0x%06x)",
+             boot    ? boot->label    : "?", boot    ? (unsigned)boot->address    : 0u);
+    ESP_LOGI(TAG, "Running partition: %s (offset=0x%06x)",
+             running ? running->label : "?", running ? (unsigned)running->address : 0u);
+
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     configure_cpu_frequency();

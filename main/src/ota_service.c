@@ -28,7 +28,10 @@ esp_err_t ota_service_handle_upload(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
     }
 
-    ESP_LOGI(TAG, "OTA begin: writing %d bytes to partition '%s'", req->content_len, part->label);
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    ESP_LOGI(TAG, "OTA start: running='%s'(0x%06x)  target='%s'(0x%06x)  size=%d bytes",
+             running ? running->label : "?", running ? (unsigned)running->address : 0u,
+             part->label, (unsigned)part->address, req->content_len);
 
     esp_ota_handle_t handle;
     esp_err_t err = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &handle);
@@ -75,10 +78,11 @@ esp_err_t ota_service_handle_upload(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA set boot failed");
     }
 
-    ESP_LOGI(TAG, "OTA complete, rebooting into '%s'", part->label);
+    const esp_partition_t *boot_now = esp_ota_get_boot_partition();
+    ESP_LOGI(TAG, "OTA complete: next boot='%s'(0x%06x), rebooting in 1s",
+             boot_now ? boot_now->label : "?", boot_now ? (unsigned)boot_now->address : 0u);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"status\":\"ota_ok\"}");
-    /* HTTP handler 先返回让响应真正发出，再由独立任务延迟重启 */
     xTaskCreate(ota_restart_task, "ota_rst", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
